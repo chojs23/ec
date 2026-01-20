@@ -1,0 +1,525 @@
+package tui
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/chojs23/easy-conflict/internal/cli"
+	"github.com/chojs23/easy-conflict/internal/engine"
+	"github.com/chojs23/easy-conflict/internal/gitmerge"
+	"github.com/chojs23/easy-conflict/internal/markers"
+)
+
+const (
+	maxUndoSize = 100
+)
+
+var (
+	titleStyle = lipgloss.NewStyle().
+			Bold(true).
+			Foreground(lipgloss.Color("170")).
+			Padding(0, 1)
+
+	paneStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("63")).
+			Padding(0, 1)
+
+	selectedPaneStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("205")).
+				Padding(0, 1)
+
+	headerStyle = lipgloss.NewStyle().
+			Bold(true).
+			Background(lipgloss.Color("62")).
+			Foreground(lipgloss.Color("230")).
+			Padding(0, 2)
+
+	footerStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("236")).
+			Foreground(lipgloss.Color("243")).
+			Padding(0, 2)
+
+	lineNumberStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("241"))
+
+	oursHighlightStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("24")).
+				Foreground(lipgloss.Color("230"))
+
+	theirsHighlightStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("52")).
+				Foreground(lipgloss.Color("230"))
+
+	resultLineStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252"))
+
+	resultHighlightStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("60")).
+				Foreground(lipgloss.Color("230"))
+
+	statusResolvedStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("42")).
+				Bold(true)
+
+	statusUnresolvedStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196")).
+				Bold(true)
+)
+
+type model struct {
+	ctx             context.Context
+	opts            cli.Options
+	state           *engine.State
+	doc             markers.Document
+	currentConflict int
+	viewportOurs    viewport.Model
+	viewportResult  viewport.Model
+	viewportTheirs  viewport.Model
+	ready           bool
+	width           int
+	height          int
+	quitting        bool
+	err             error
+}
+
+// Run starts the TUI for interactive conflict resolution.
+func Run(ctx context.Context, opts cli.Options) error {
+	// Generate diff3 view
+	diff3Bytes, err := gitmerge.MergeFileDiff3(ctx, opts.LocalPath, opts.BasePath, opts.RemotePath)
+	if err != nil {
+		return fmt.Errorf("failed to generate diff3 view: %w", err)
+	}
+
+	// Parse conflicts
+	doc, err := markers.Parse(diff3Bytes)
+	if err != nil {
+		return fmt.Errorf("failed to parse conflicts: %w", err)
+	}
+
+	// Validate base completeness unless explicitly allowed to proceed without it.
+	if !opts.AllowMissingBase {
+		if err := engine.ValidateBaseCompleteness(doc); err != nil {
+			return fmt.Errorf("base validation failed: %w", err)
+		}
+	}
+
+	// Initialize state
+	state, err := engine.NewState(doc, maxUndoSize)
+	if err != nil {
+		return fmt.Errorf("failed to create state: %w", err)
+	}
+
+	m := model{
+		ctx:             ctx,
+		opts:            opts,
+		state:           state,
+		doc:             doc,
+		currentConflict: 0,
+	}
+
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	finalModel, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("TUI error: %w", err)
+	}
+
+	// Check for errors from the model
+	if m, ok := finalModel.(model); ok {
+		return m.err
+	}
+
+	return nil
+}
+
+func (m model) Init() tea.Cmd {
+	return nil
+}
+
+type editorFinishedMsg struct {
+	err error
+}
+
+func (m *model) openEditor() tea.Cmd {
+	return func() tea.Msg {
+		editor := os.Getenv("EDITOR")
+		if editor == "" {
+			editor = "vi"
+		}
+
+		if editor == "true" {
+			return editorFinishedMsg{err: nil}
+		}
+
+		resolved, err := m.state.Preview()
+		if err != nil {
+			return editorFinishedMsg{err: fmt.Errorf("cannot generate preview for editor: %w", err)}
+		}
+
+		mergedBytes, err := os.ReadFile(m.opts.MergedPath)
+		if err != nil {
+			return editorFinishedMsg{err: fmt.Errorf("read merged for backup: %w", err)}
+		}
+
+		if !m.opts.NoBackup {
+			bak := m.opts.MergedPath + ".easy-conflict.bak"
+			if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
+				return editorFinishedMsg{err: fmt.Errorf("write backup %s: %w", filepath.Base(bak), err)}
+			}
+		}
+
+		if err := os.WriteFile(m.opts.MergedPath, resolved, 0o644); err != nil {
+			return editorFinishedMsg{err: fmt.Errorf("write merged before editor: %w", err)}
+		}
+
+		cmd := exec.Command(editor, m.opts.MergedPath)
+		cmd.Stdin = os.Stdin
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		if err := cmd.Run(); err != nil {
+			return editorFinishedMsg{err: fmt.Errorf("editor failed: %w", err)}
+		}
+
+		return editorFinishedMsg{err: nil}
+	}
+}
+
+func (m *model) reloadFromFile() error {
+	editedBytes, err := os.ReadFile(m.opts.MergedPath)
+	if err != nil {
+		return fmt.Errorf("read edited file: %w", err)
+	}
+
+	diff3Bytes, err := gitmerge.MergeFileDiff3(m.ctx, m.opts.LocalPath, m.opts.BasePath, m.opts.RemotePath)
+	if err != nil {
+		return fmt.Errorf("regenerate diff3 view: %w", err)
+	}
+
+	doc, err := markers.Parse(diff3Bytes)
+	if err != nil {
+		return fmt.Errorf("parse diff3 view: %w", err)
+	}
+
+	if err := engine.ValidateBaseCompleteness(doc); err != nil {
+		return fmt.Errorf("base validation failed: %w", err)
+	}
+
+	state, err := engine.NewState(doc, maxUndoSize)
+	if err != nil {
+		return fmt.Errorf("create new state: %w", err)
+	}
+
+	editedDoc, err := markers.Parse(editedBytes)
+	if err != nil {
+		return fmt.Errorf("parse edited file: %w", err)
+	}
+
+	for i := range doc.Conflicts {
+		if i >= len(editedDoc.Conflicts) {
+			continue
+		}
+
+		editedRef := editedDoc.Conflicts[i]
+		editedSeg, ok := editedDoc.Segments[editedRef.SegmentIndex].(markers.ConflictSegment)
+		if !ok {
+			continue
+		}
+
+		if editedSeg.Resolution != markers.ResolutionUnset {
+			if err := state.ApplyResolution(i, editedSeg.Resolution); err != nil {
+				return fmt.Errorf("apply resolution from edited file: %w", err)
+			}
+		}
+	}
+
+	m.state = state
+	m.doc = state.Document()
+
+	if m.currentConflict >= len(m.doc.Conflicts) {
+		m.currentConflict = len(m.doc.Conflicts) - 1
+	}
+	if m.currentConflict < 0 {
+		m.currentConflict = 0
+	}
+
+	m.updateViewports()
+
+	return nil
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	var cmds []tea.Cmd
+
+	switch msg := msg.(type) {
+	case editorFinishedMsg:
+		if msg.err != nil {
+			m.err = fmt.Errorf("editor workflow failed: %w", msg.err)
+			m.quitting = true
+			return m, tea.Quit
+		}
+
+		if err := m.reloadFromFile(); err != nil {
+			m.err = fmt.Errorf("reload after editor failed: %w", err)
+			m.quitting = true
+			return m, tea.Quit
+		}
+
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "q", "ctrl+c":
+			m.quitting = true
+			return m, tea.Quit
+
+		case "n", "j":
+			// Next conflict
+			if m.currentConflict < len(m.doc.Conflicts)-1 {
+				m.currentConflict++
+				m.updateViewports()
+			}
+
+		case "p", "k":
+			// Previous conflict
+			if m.currentConflict > 0 {
+				m.currentConflict--
+				m.updateViewports()
+			}
+
+		case "o":
+			// Apply ours
+			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionOurs); err != nil {
+				m.err = fmt.Errorf("failed to apply ours: %w", err)
+				return m, tea.Quit
+			}
+			m.doc = m.state.Document()
+			m.updateViewports()
+
+		case "t":
+			// Apply theirs
+			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionTheirs); err != nil {
+				m.err = fmt.Errorf("failed to apply theirs: %w", err)
+				return m, tea.Quit
+			}
+			m.doc = m.state.Document()
+			m.updateViewports()
+
+		case "b":
+			// Apply both
+			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionBoth); err != nil {
+				m.err = fmt.Errorf("failed to apply both: %w", err)
+				return m, tea.Quit
+			}
+			m.doc = m.state.Document()
+			m.updateViewports()
+
+		case "x":
+			// Apply none
+			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionNone); err != nil {
+				m.err = fmt.Errorf("failed to apply none: %w", err)
+				return m, tea.Quit
+			}
+			m.doc = m.state.Document()
+			m.updateViewports()
+
+		case "u":
+			// Undo
+			if err := m.state.Undo(); err == nil {
+				m.doc = m.state.Document()
+				m.updateViewports()
+			}
+
+		case "w":
+			// Write and quit
+			if err := m.writeResolved(); err != nil {
+				m.err = fmt.Errorf("failed to write resolved: %w", err)
+			}
+			m.quitting = true
+			return m, tea.Quit
+
+		case "e":
+			return m, m.openEditor()
+		}
+
+	case tea.WindowSizeMsg:
+		if !m.ready {
+			m.width = msg.Width
+			m.height = msg.Height
+
+			// Calculate pane dimensions
+			headerHeight := 2
+			footerHeight := 2
+			contentHeight := m.height - headerHeight - footerHeight - 6 // borders + padding
+
+			paneWidth := (m.width - 12) / 3 // 3 panes with borders
+
+			m.viewportOurs = viewport.New(paneWidth, contentHeight)
+			m.viewportResult = viewport.New(paneWidth, contentHeight)
+			m.viewportTheirs = viewport.New(paneWidth, contentHeight)
+
+			m.ready = true
+			m.updateViewports()
+		} else {
+			m.width = msg.Width
+			m.height = msg.Height
+
+			headerHeight := 2
+			footerHeight := 2
+			contentHeight := m.height - headerHeight - footerHeight - 6
+
+			paneWidth := (m.width - 12) / 3
+
+			m.viewportOurs.Width = paneWidth
+			m.viewportOurs.Height = contentHeight
+			m.viewportResult.Width = paneWidth
+			m.viewportResult.Height = contentHeight
+			m.viewportTheirs.Width = paneWidth
+			m.viewportTheirs.Height = contentHeight
+
+			m.updateViewports()
+		}
+	}
+
+	// Update viewports
+	m.viewportOurs, cmd = m.viewportOurs.Update(msg)
+	cmds = append(cmds, cmd)
+	m.viewportResult, cmd = m.viewportResult.Update(msg)
+	cmds = append(cmds, cmd)
+	m.viewportTheirs, cmd = m.viewportTheirs.Update(msg)
+	cmds = append(cmds, cmd)
+
+	return m, tea.Batch(cmds...)
+}
+
+func (m model) View() string {
+	if !m.ready {
+		return "\n  Initializing..."
+	}
+
+	if m.quitting {
+		if m.err != nil {
+			return fmt.Sprintf("\n  Error: %v\n", m.err)
+		}
+		return "\n  Resolved! File written.\n"
+	}
+
+	// Header
+	fileName := m.opts.MergedPath
+	conflictStatus := fmt.Sprintf("Conflict %d/%d", m.currentConflict+1, len(m.doc.Conflicts))
+	header := headerStyle.Render(fmt.Sprintf("%s - %s", fileName, conflictStatus))
+
+	// Get current conflict
+	if m.currentConflict >= len(m.doc.Conflicts) {
+		return "\n  No conflicts found.\n"
+	}
+
+	ref := m.doc.Conflicts[m.currentConflict]
+	seg, ok := m.doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+	if !ok {
+		return "\n  Internal error: invalid conflict segment.\n"
+	}
+
+	// Resolution status
+	statusText := "Unresolved"
+	if seg.Resolution != markers.ResolutionUnset {
+		statusText = fmt.Sprintf("Resolved: %s", seg.Resolution)
+	}
+
+	// Render panes
+	oursPane := paneStyle.Render(
+		titleStyle.Render("OURS") + "\n" +
+			m.viewportOurs.View(),
+	)
+
+	resultPane := selectedPaneStyle.Render(
+		titleStyle.Render(fmt.Sprintf("RESULT (%s)", statusText)) + "\n" +
+			m.viewportResult.View(),
+	)
+
+	theirsPane := paneStyle.Render(
+		titleStyle.Render("THEIRS") + "\n" +
+			m.viewportTheirs.View(),
+	)
+
+	panes := lipgloss.JoinHorizontal(lipgloss.Top, oursPane, resultPane, theirsPane)
+
+	// Footer
+	undoInfo := ""
+	if m.state.UndoDepth() > 0 {
+		undoInfo = fmt.Sprintf(" | Undo available: %d", m.state.UndoDepth())
+	}
+
+	footer := footerStyle.Width(m.width).Render(
+		fmt.Sprintf("n/j: next | p/k: prev | o: ours | t: theirs | b: both | x: none | u: undo | e: editor | w: write & quit | q: quit%s", undoInfo),
+	)
+
+	return lipgloss.JoinVertical(lipgloss.Left, header, panes, footer)
+}
+
+func (m *model) updateViewports() {
+	if m.currentConflict >= len(m.doc.Conflicts) {
+		return
+	}
+
+	// Update ours pane (full file, highlight conflicts)
+	oursLines := buildPaneLines(m.doc, paneOurs, m.currentConflict)
+	oursContent := renderLines(oursLines, lineNumberStyle, resultLineStyle, oursHighlightStyle)
+	m.viewportOurs.SetContent(oursContent)
+
+	// Update theirs pane (full file, highlight conflicts)
+	theirsLines := buildPaneLines(m.doc, paneTheirs, m.currentConflict)
+	theirsContent := renderLines(theirsLines, lineNumberStyle, resultLineStyle, theirsHighlightStyle)
+	m.viewportTheirs.SetContent(theirsContent)
+
+	// Update result pane with full resolved preview
+	resultLines := buildResultLines(m.doc, m.currentConflict)
+	resultContent := renderLines(resultLines, lineNumberStyle, resultLineStyle, resultHighlightStyle)
+	m.viewportResult.SetContent(resultContent)
+}
+
+func (m *model) writeResolved() error {
+	// Generate preview
+	resolved, err := m.state.Preview()
+	if err != nil {
+		return fmt.Errorf("cannot write: %w", err)
+	}
+
+	// Read original merged file for backup
+	mergedBytes, err := os.ReadFile(m.opts.MergedPath)
+	if err != nil {
+		return fmt.Errorf("read merged for backup: %w", err)
+	}
+
+	// Write backup if not disabled
+	if !m.opts.NoBackup {
+		bak := m.opts.MergedPath + ".easy-conflict.bak"
+		if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
+			return fmt.Errorf("write backup %s: %w", filepath.Base(bak), err)
+		}
+	}
+
+	// Write resolved file
+	if err := os.WriteFile(m.opts.MergedPath, resolved, 0o644); err != nil {
+		return fmt.Errorf("write merged: %w", err)
+	}
+
+	// Verify no conflict markers remain
+	postDoc, err := markers.Parse(resolved)
+	if err != nil {
+		return fmt.Errorf("post-parse merged: %w", err)
+	}
+	if len(postDoc.Conflicts) != 0 {
+		return fmt.Errorf("resolution output still contains conflict markers")
+	}
+
+	return nil
+}
