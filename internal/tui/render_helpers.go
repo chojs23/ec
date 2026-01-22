@@ -103,6 +103,13 @@ func buildResultLines(doc markers.Document, highlightConflict int) []lineInfo {
 			conflictIndex++
 			underline := conflictIndex == highlightConflict
 			highlight := underline
+			if underline {
+				lines = append(lines, lineInfo{
+					text:      fmt.Sprintf(">> insert %s here >>", resultLabel(s.Resolution)),
+					highlight: true,
+					dim:       true,
+				})
+			}
 			switch s.Resolution {
 			case markers.ResolutionOurs:
 				lines = append(lines, makeLineInfos(splitLines(s.Ours), underline, highlight, false)...)
@@ -128,4 +135,19 @@ func makeLineInfos(lines []string, underline bool, highlight bool, dim bool) []l
 		infos = append(infos, lineInfo{text: line, underline: underline, highlight: highlight, dim: dim})
 	}
 	return infos
+}
+
+func resultLabel(resolution markers.Resolution) string {
+	switch resolution {
+	case markers.ResolutionOurs:
+		return "ours"
+	case markers.ResolutionTheirs:
+		return "theirs"
+	case markers.ResolutionBoth:
+		return "both"
+	case markers.ResolutionNone:
+		return "none"
+	default:
+		return "selection"
+	}
 }

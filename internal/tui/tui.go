@@ -65,6 +65,14 @@ var (
 				Background(lipgloss.Color("60")).
 				Foreground(lipgloss.Color("230"))
 
+	selectedOursHighlightStyle = lipgloss.NewStyle().
+					Background(lipgloss.Color("29")).
+					Foreground(lipgloss.Color("231"))
+
+	selectedTheirsHighlightStyle = lipgloss.NewStyle().
+					Background(lipgloss.Color("88")).
+					Foreground(lipgloss.Color("231"))
+
 	statusResolvedStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("42")).
 				Bold(true)
@@ -80,6 +88,7 @@ type model struct {
 	state           *engine.State
 	doc             markers.Document
 	currentConflict int
+	selectedSide    selectionSide
 	viewportOurs    viewport.Model
 	viewportResult  viewport.Model
 	viewportTheirs  viewport.Model
@@ -89,6 +98,13 @@ type model struct {
 	quitting        bool
 	err             error
 }
+
+type selectionSide int
+
+const (
+	selectedOurs selectionSide = iota
+	selectedTheirs
+)
 
 // Run starts the TUI for interactive conflict resolution.
 func Run(ctx context.Context, opts cli.Options) error {
@@ -123,6 +139,7 @@ func Run(ctx context.Context, opts cli.Options) error {
 		state:           state,
 		doc:             doc,
 		currentConflict: 0,
+		selectedSide:    selectedOurs,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
