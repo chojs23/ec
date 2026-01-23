@@ -312,6 +312,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateViewports()
 			}
 
+		case "h":
+			m.selectedSide = selectedOurs
+			m.updateViewports()
+
+		case "l":
+			m.selectedSide = selectedTheirs
+			m.updateViewports()
+
 		case "o":
 			// Apply ours
 			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionOurs); err != nil {
@@ -325,6 +333,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Apply theirs
 			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionTheirs); err != nil {
 				m.err = fmt.Errorf("failed to apply theirs: %w", err)
+				return m, tea.Quit
+			}
+			m.doc = m.state.Document()
+			m.updateViewports()
+
+		case "a":
+			// Accept selected side
+			var resolution markers.Resolution
+			switch m.selectedSide {
+			case selectedTheirs:
+				resolution = markers.ResolutionTheirs
+			default:
+				resolution = markers.ResolutionOurs
+			}
+			if err := m.state.ApplyResolution(m.currentConflict, resolution); err != nil {
+				m.err = fmt.Errorf("failed to apply selection: %w", err)
+				return m, tea.Quit
+			}
+			m.doc = m.state.Document()
+			m.updateViewports()
+
+		case "d":
+			// Discard selection
+			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionNone); err != nil {
+				m.err = fmt.Errorf("failed to discard selection: %w", err)
 				return m, tea.Quit
 			}
 			m.doc = m.state.Document()
@@ -476,7 +509,7 @@ func (m model) View() string {
 	}
 
 	footer := footerStyle.Width(m.width).Render(
-		fmt.Sprintf("n/j: next | p/k: prev | o: ours | t: theirs | b: both | x: none | u: undo | e: editor | w: write & quit | q: quit%s", undoInfo),
+		fmt.Sprintf("n/j: next | p/k: prev | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | b: both | x: none | u: undo | e: editor | w: write & quit | q: quit%s", undoInfo),
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, panes, footer)
@@ -489,12 +522,20 @@ func (m *model) updateViewports() {
 
 	// Update ours pane (full file, highlight conflicts)
 	oursLines := buildPaneLines(m.doc, paneOurs, m.currentConflict)
-	oursContent := renderLines(oursLines, lineNumberStyle, resultLineStyle, oursHighlightStyle)
+	oursHighlight := oursHighlightStyle
+	if m.selectedSide == selectedOurs {
+		oursHighlight = selectedOursHighlightStyle
+	}
+	oursContent := renderLines(oursLines, lineNumberStyle, resultLineStyle, oursHighlight)
 	m.viewportOurs.SetContent(oursContent)
 
 	// Update theirs pane (full file, highlight conflicts)
 	theirsLines := buildPaneLines(m.doc, paneTheirs, m.currentConflict)
-	theirsContent := renderLines(theirsLines, lineNumberStyle, resultLineStyle, theirsHighlightStyle)
+	theirsHighlight := theirsHighlightStyle
+	if m.selectedSide == selectedTheirs {
+		theirsHighlight = selectedTheirsHighlightStyle
+	}
+	theirsContent := renderLines(theirsLines, lineNumberStyle, resultLineStyle, theirsHighlight)
 	m.viewportTheirs.SetContent(theirsContent)
 
 	// Update result pane with full resolved preview
