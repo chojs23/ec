@@ -526,7 +526,7 @@ func (m *model) updateViewports() {
 	if m.selectedSide == selectedOurs {
 		oursHighlight = selectedOursHighlightStyle
 	}
-	oursContent := renderLines(oursLines, lineNumberStyle, resultLineStyle, oursHighlight)
+	oursContent := renderLines(oursLines, lineNumberStyle, resultLineStyle, oursHighlightStyle, oursHighlight)
 	m.viewportOurs.SetContent(oursContent)
 
 	// Update theirs pane (full file, highlight conflicts)
@@ -535,12 +535,12 @@ func (m *model) updateViewports() {
 	if m.selectedSide == selectedTheirs {
 		theirsHighlight = selectedTheirsHighlightStyle
 	}
-	theirsContent := renderLines(theirsLines, lineNumberStyle, resultLineStyle, theirsHighlight)
+	theirsContent := renderLines(theirsLines, lineNumberStyle, resultLineStyle, theirsHighlightStyle, theirsHighlight)
 	m.viewportTheirs.SetContent(theirsContent)
 
 	// Update result pane with full resolved preview
 	resultLines := buildResultLines(m.doc, m.currentConflict)
-	resultContent := renderLines(resultLines, lineNumberStyle, resultLineStyle, resultHighlightStyle)
+	resultContent := renderLines(resultLines, lineNumberStyle, resultLineStyle, resultHighlightStyle, resultHighlightStyle)
 	m.viewportResult.SetContent(resultContent)
 }
 

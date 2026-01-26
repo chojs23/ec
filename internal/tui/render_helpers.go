@@ -11,6 +11,7 @@ import (
 type lineInfo struct {
 	text      string
 	highlight bool
+	selected  bool
 	underline bool
 	dim       bool
 }
@@ -27,7 +28,7 @@ func splitLines(content []byte) []string {
 	return lines
 }
 
-func renderLines(lines []lineInfo, numberStyle, lineStyle, highlightStyle lipgloss.Style) string {
+func renderLines(lines []lineInfo, numberStyle, lineStyle, highlightStyle, selectedHighlightStyle lipgloss.Style) string {
 	if len(lines) == 0 {
 		return ""
 	}
@@ -40,7 +41,9 @@ func renderLines(lines []lineInfo, numberStyle, lineStyle, highlightStyle lipglo
 		styledPrefix := numberStyle.Render(prefix)
 
 		style := lineStyle
-		if line.highlight {
+		if line.selected {
+			style = selectedHighlightStyle
+		} else if line.highlight {
 			style = highlightStyle
 		}
 		if line.dim {
@@ -73,10 +76,11 @@ func buildPaneLines(doc markers.Document, side paneSide, highlightConflict int) 
 	for _, seg := range doc.Segments {
 		switch s := seg.(type) {
 		case markers.TextSegment:
-			lines = append(lines, makeLineInfos(splitLines(s.Bytes), false, false, false)...)
+			lines = append(lines, makeLineInfos(splitLines(s.Bytes), false, false, false, false)...)
 		case markers.ConflictSegment:
 			conflictIndex++
-			highlight := conflictIndex == highlightConflict
+			highlight := true
+			selected := conflictIndex == highlightConflict
 			var content []byte
 			switch side {
 			case paneOurs:
@@ -84,7 +88,7 @@ func buildPaneLines(doc markers.Document, side paneSide, highlightConflict int) 
 			case paneTheirs:
 				content = s.Theirs
 			}
-			lines = append(lines, makeLineInfos(splitLines(content), false, highlight, false)...)
+			lines = append(lines, makeLineInfos(splitLines(content), false, highlight, selected, false)...)
 		}
 	}
 
@@ -98,26 +102,28 @@ func buildResultLines(doc markers.Document, highlightConflict int) []lineInfo {
 	for _, seg := range doc.Segments {
 		switch s := seg.(type) {
 		case markers.TextSegment:
-			lines = append(lines, makeLineInfos(splitLines(s.Bytes), false, false, false)...)
+			lines = append(lines, makeLineInfos(splitLines(s.Bytes), false, false, false, false)...)
 		case markers.ConflictSegment:
 			conflictIndex++
 			underline := conflictIndex == highlightConflict
 			highlight := underline
+			selected := underline
 			if underline {
 				lines = append(lines, lineInfo{
 					text:      fmt.Sprintf(">> insert %s here >>", resultLabel(s.Resolution)),
 					highlight: true,
+					selected:  true,
 					dim:       true,
 				})
 			}
 			switch s.Resolution {
 			case markers.ResolutionOurs:
-				lines = append(lines, makeLineInfos(splitLines(s.Ours), underline, highlight, false)...)
+				lines = append(lines, makeLineInfos(splitLines(s.Ours), underline, highlight, selected, false)...)
 			case markers.ResolutionTheirs:
-				lines = append(lines, makeLineInfos(splitLines(s.Theirs), underline, highlight, false)...)
+				lines = append(lines, makeLineInfos(splitLines(s.Theirs), underline, highlight, selected, false)...)
 			case markers.ResolutionBoth:
-				lines = append(lines, makeLineInfos(splitLines(s.Ours), underline, highlight, false)...)
-				lines = append(lines, makeLineInfos(splitLines(s.Theirs), underline, highlight, false)...)
+				lines = append(lines, makeLineInfos(splitLines(s.Ours), underline, highlight, selected, false)...)
+				lines = append(lines, makeLineInfos(splitLines(s.Theirs), underline, highlight, selected, false)...)
 			case markers.ResolutionNone:
 				// Write nothing for this conflict.
 			default:
@@ -129,10 +135,10 @@ func buildResultLines(doc markers.Document, highlightConflict int) []lineInfo {
 	return lines
 }
 
-func makeLineInfos(lines []string, underline bool, highlight bool, dim bool) []lineInfo {
+func makeLineInfos(lines []string, underline bool, highlight bool, selected bool, dim bool) []lineInfo {
 	infos := make([]lineInfo, 0, len(lines))
 	for _, line := range lines {
-		infos = append(infos, lineInfo{text: line, underline: underline, highlight: highlight, dim: dim})
+		infos = append(infos, lineInfo{text: line, underline: underline, highlight: highlight, selected: selected, dim: dim})
 	}
 	return infos
 }
