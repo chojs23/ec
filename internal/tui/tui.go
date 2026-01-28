@@ -65,13 +65,27 @@ var (
 				Background(lipgloss.Color("60")).
 				Foreground(lipgloss.Color("230"))
 
-	selectedOursHighlightStyle = lipgloss.NewStyle().
-					Background(lipgloss.Color("29")).
-					Foreground(lipgloss.Color("231"))
+	modifiedLineStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("24")).
+				Foreground(lipgloss.Color("231"))
 
-	selectedTheirsHighlightStyle = lipgloss.NewStyle().
-					Background(lipgloss.Color("88")).
-					Foreground(lipgloss.Color("231"))
+	addedLineStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("28")).
+			Foreground(lipgloss.Color("231"))
+
+	removedLineStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("237")).
+				Foreground(lipgloss.Color("250"))
+
+	conflictedLineStyle = lipgloss.NewStyle().
+				Background(lipgloss.Color("88")).
+				Foreground(lipgloss.Color("231"))
+
+	insertMarkerStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("196")).
+				Bold(true)
+
+	selectedHunkBackground = lipgloss.Color("236")
 
 	statusResolvedStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("42")).
@@ -89,6 +103,7 @@ type model struct {
 	doc             markers.Document
 	currentConflict int
 	selectedSide    selectionSide
+	pendingScroll   bool
 	viewportOurs    viewport.Model
 	viewportResult  viewport.Model
 	viewportTheirs  viewport.Model
@@ -140,6 +155,7 @@ func Run(ctx context.Context, opts cli.Options) error {
 		doc:             doc,
 		currentConflict: 0,
 		selectedSide:    selectedOurs,
+		pendingScroll:   true,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -298,17 +314,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.quitting = true
 			return m, tea.Quit
 
-		case "n", "j":
+		case "n":
 			// Next conflict
 			if m.currentConflict < len(m.doc.Conflicts)-1 {
 				m.currentConflict++
+				m.pendingScroll = true
 				m.updateViewports()
 			}
 
-		case "p", "k":
+		case "p":
 			// Previous conflict
 			if m.currentConflict > 0 {
 				m.currentConflict--
+				m.pendingScroll = true
 				m.updateViewports()
 			}
 
@@ -333,6 +351,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Apply theirs
 			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionTheirs); err != nil {
 				m.err = fmt.Errorf("failed to apply theirs: %w", err)
+				return m, tea.Quit
+			}
+			m.doc = m.state.Document()
+			m.updateViewports()
+
+		case "O":
+			// Apply ours to all conflicts
+			if err := m.state.ApplyAll(markers.ResolutionOurs); err != nil {
+				m.err = fmt.Errorf("failed to apply ours to all: %w", err)
+				return m, tea.Quit
+			}
+			m.doc = m.state.Document()
+			m.updateViewports()
+
+		case "T":
+			// Apply theirs to all conflicts
+			if err := m.state.ApplyAll(markers.ResolutionTheirs); err != nil {
+				m.err = fmt.Errorf("failed to apply theirs to all: %w", err)
 				return m, tea.Quit
 			}
 			m.doc = m.state.Document()
@@ -509,7 +545,7 @@ func (m model) View() string {
 	}
 
 	footer := footerStyle.Width(m.width).Render(
-		fmt.Sprintf("n/j: next | p/k: prev | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | b: both | x: none | u: undo | e: editor | w: write & quit | q: quit%s", undoInfo),
+		fmt.Sprintf("n: next | p: prev | j/k: scroll | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | O: ours all | T: theirs all | b: both | x: none | u: undo | e: editor | w: write & quit | q: quit%s", undoInfo),
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, panes, footer)
@@ -520,28 +556,83 @@ func (m *model) updateViewports() {
 		return
 	}
 
-	// Update ours pane (full file, highlight conflicts)
-	oursLines := buildPaneLines(m.doc, paneOurs, m.currentConflict)
-	oursHighlight := oursHighlightStyle
-	if m.selectedSide == selectedOurs {
-		oursHighlight = selectedOursHighlightStyle
+	baseStyles := map[lineCategory]lipgloss.Style{
+		categoryDefault: resultLineStyle,
 	}
-	oursContent := renderLines(oursLines, lineNumberStyle, resultLineStyle, oursHighlightStyle, oursHighlight)
+
+	highlightStyles := map[lineCategory]lipgloss.Style{
+		categoryModified:     modifiedLineStyle,
+		categoryAdded:        addedLineStyle,
+		categoryRemoved:      removedLineStyle,
+		categoryConflicted:   conflictedLineStyle,
+		categoryInsertMarker: insertMarkerStyle,
+	}
+
+	selectedStyles := map[lineCategory]lipgloss.Style{
+		categoryDefault: resultLineStyle.Copy().Bold(true),
+	}
+	for category, style := range highlightStyles {
+		selectedStyles[category] = style.Copy().Bold(true)
+	}
+
+	connectorStyles := map[lineCategory]lipgloss.Style{
+		categoryDefault: lineNumberStyle,
+	}
+	for category, style := range highlightStyles {
+		connectorStyles[category] = style
+	}
+
+	// Update ours pane (full file, highlight conflicts)
+	oursLines, oursStart := buildPaneLines(m.doc, paneOurs, m.currentConflict, m.selectedSide)
+	oursContent := renderLines(oursLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles)
 	m.viewportOurs.SetContent(oursContent)
+	if m.pendingScroll {
+		ensureVisible(&m.viewportOurs, oursStart, len(oursLines))
+	}
 
 	// Update theirs pane (full file, highlight conflicts)
-	theirsLines := buildPaneLines(m.doc, paneTheirs, m.currentConflict)
-	theirsHighlight := theirsHighlightStyle
-	if m.selectedSide == selectedTheirs {
-		theirsHighlight = selectedTheirsHighlightStyle
-	}
-	theirsContent := renderLines(theirsLines, lineNumberStyle, resultLineStyle, theirsHighlightStyle, theirsHighlight)
+	theirsLines, theirsStart := buildPaneLines(m.doc, paneTheirs, m.currentConflict, m.selectedSide)
+	theirsContent := renderLines(theirsLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles)
 	m.viewportTheirs.SetContent(theirsContent)
+	if m.pendingScroll {
+		ensureVisible(&m.viewportTheirs, theirsStart, len(theirsLines))
+	}
 
 	// Update result pane with full resolved preview
-	resultLines := buildResultLines(m.doc, m.currentConflict)
-	resultContent := renderLines(resultLines, lineNumberStyle, resultLineStyle, resultHighlightStyle, resultHighlightStyle)
+	resultLines, resultStart := buildResultLines(m.doc, m.currentConflict, m.selectedSide)
+	resultContent := renderLines(resultLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles)
 	m.viewportResult.SetContent(resultContent)
+	if m.pendingScroll {
+		ensureVisible(&m.viewportResult, resultStart, len(resultLines))
+	}
+	if m.pendingScroll {
+		m.pendingScroll = false
+	}
+}
+
+func ensureVisible(viewportModel *viewport.Model, start int, total int) {
+	if viewportModel.Height <= 0 {
+		return
+	}
+	if total <= 0 {
+		viewportModel.YOffset = 0
+		return
+	}
+
+	maxOffset := total - viewportModel.Height
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+
+	margin := 2
+	target := start - margin
+	if target < 0 {
+		target = 0
+	}
+	if target > maxOffset {
+		target = maxOffset
+	}
+	viewportModel.YOffset = target
 }
 
 func (m *model) writeResolved() error {
