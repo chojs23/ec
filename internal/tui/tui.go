@@ -36,6 +36,21 @@ var (
 				BorderForeground(lipgloss.Color("205")).
 				Padding(0, 1)
 
+	oursPaneStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("255")).
+			Padding(0, 1)
+
+	theirsPaneStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("255")).
+			Padding(0, 1)
+
+	selectedSidePaneStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("33")).
+				Padding(0, 1)
+
 	headerStyle = lipgloss.NewStyle().
 			Bold(true).
 			Background(lipgloss.Color("62")).
@@ -94,6 +109,16 @@ var (
 	statusUnresolvedStyle = lipgloss.NewStyle().
 				Foreground(lipgloss.Color("196")).
 				Bold(true)
+
+	resultResolvedPaneStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("42")).
+				Padding(0, 1)
+
+	resultUnresolvedPaneStyle = lipgloss.NewStyle().
+					Border(lipgloss.RoundedBorder()).
+					BorderForeground(lipgloss.Color("196")).
+					Padding(0, 1)
 )
 
 type model struct {
@@ -338,6 +363,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.selectedSide = selectedTheirs
 			m.updateViewports()
 
+		case "H":
+			m.scrollHorizontal(-4)
+
+		case "L":
+			m.scrollHorizontal(4)
+
 		case "o":
 			// Apply ours
 			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionOurs); err != nil {
@@ -521,17 +552,29 @@ func (m model) View() string {
 	}
 
 	// Render panes
-	oursPane := paneStyle.Render(
+	oursStyle := oursPaneStyle
+	if m.selectedSide == selectedOurs {
+		oursStyle = selectedSidePaneStyle
+	}
+	oursPane := oursStyle.Render(
 		titleStyle.Render("OURS") + "\n" +
 			m.viewportOurs.View(),
 	)
 
-	resultPane := selectedPaneStyle.Render(
+	resultStyle := resultUnresolvedPaneStyle
+	if allResolved(m.doc) {
+		resultStyle = resultResolvedPaneStyle
+	}
+	resultPane := resultStyle.Render(
 		titleStyle.Render(fmt.Sprintf("RESULT (%s)", statusText)) + "\n" +
 			m.viewportResult.View(),
 	)
 
-	theirsPane := paneStyle.Render(
+	theirsStyle := theirsPaneStyle
+	if m.selectedSide == selectedTheirs {
+		theirsStyle = selectedSidePaneStyle
+	}
+	theirsPane := theirsStyle.Render(
 		titleStyle.Render("THEIRS") + "\n" +
 			m.viewportTheirs.View(),
 	)
@@ -635,6 +678,18 @@ func ensureVisible(viewportModel *viewport.Model, start int, total int) {
 	viewportModel.YOffset = target
 }
 
+func (m *model) scrollHorizontal(delta int) {
+	apply := func(viewportModel *viewport.Model) {
+		viewportModel.XOffset += delta
+		if viewportModel.XOffset < 0 {
+			viewportModel.XOffset = 0
+		}
+	}
+	apply(&m.viewportOurs)
+	apply(&m.viewportResult)
+	apply(&m.viewportTheirs)
+}
+
 func (m *model) writeResolved() error {
 	// Generate preview
 	resolved, err := m.state.Preview()
@@ -671,4 +726,17 @@ func (m *model) writeResolved() error {
 	}
 
 	return nil
+}
+
+func allResolved(doc markers.Document) bool {
+	for _, ref := range doc.Conflicts {
+		seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+		if !ok {
+			return false
+		}
+		if seg.Resolution == markers.ResolutionUnset {
+			return false
+		}
+	}
+	return true
 }
