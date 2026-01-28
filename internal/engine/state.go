@@ -58,6 +58,31 @@ func (s *State) ApplyResolution(conflictIndex int, resolution markers.Resolution
 	return nil
 }
 
+// ApplyAll sets the resolution for all conflicts.
+func (s *State) ApplyAll(resolution markers.Resolution) error {
+	// Validate resolution
+	switch resolution {
+	case markers.ResolutionOurs, markers.ResolutionTheirs, markers.ResolutionBoth, markers.ResolutionNone:
+		// Valid
+	default:
+		return fmt.Errorf("invalid resolution: %q", resolution)
+	}
+
+	// Save current state to undo stack before modifying
+	s.pushUndo()
+
+	for _, ref := range s.doc.Conflicts {
+		seg, ok := s.doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+		if !ok {
+			return fmt.Errorf("internal: conflict points to non-ConflictSegment")
+		}
+		seg.Resolution = resolution
+		s.doc.Segments[ref.SegmentIndex] = seg
+	}
+
+	return nil
+}
+
 // Undo restores the previous state.
 // Returns error if no undo history is available.
 func (s *State) Undo() error {

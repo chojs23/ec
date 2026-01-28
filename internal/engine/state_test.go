@@ -127,6 +127,44 @@ line3
 	})
 }
 
+func TestApplyAll(t *testing.T) {
+	input := []byte(`line1
+<<<<<<< HEAD
+ours
+=======
+theirs
+>>>>>>> branch
+line2
+<<<<<<< HEAD
+ours2
+=======
+theirs2
+>>>>>>> branch
+line3
+`)
+
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	state, err := NewState(doc, 10)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+
+	if err := state.ApplyAll(markers.ResolutionTheirs); err != nil {
+		t.Fatalf("ApplyAll failed: %v", err)
+	}
+
+	for i, ref := range state.doc.Conflicts {
+		seg := state.doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+		if seg.Resolution != markers.ResolutionTheirs {
+			t.Errorf("conflict %d expected theirs, got %q", i, seg.Resolution)
+		}
+	}
+}
+
 func TestUndo(t *testing.T) {
 	input := []byte(`line1
 <<<<<<< HEAD
