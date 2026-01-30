@@ -100,6 +100,11 @@ var (
 				Foreground(lipgloss.Color("196")).
 				Bold(true)
 
+	selectedHunkMarkerStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("226")).
+				Background(lipgloss.Color("88")).
+				Bold(true)
+
 	selectedHunkBackground = lipgloss.Color("236")
 
 	statusResolvedStyle = lipgloss.NewStyle().
@@ -588,7 +593,7 @@ func (m model) View() string {
 	}
 
 	footer := footerStyle.Width(m.width).Render(
-		fmt.Sprintf("n: next | p: prev | j/k: scroll | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | O: ours all | T: theirs all | b: both | x: none | u: undo | e: editor | w: write & quit | q: quit%s", undoInfo),
+		fmt.Sprintf("n: next | p: prev | j/k: scroll | H/L: scroll | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | O: ours all | T: theirs all | b: both | x: none | u: undo | e: editor | w: write & quit | q: quit%s", undoInfo),
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, panes, footer)
@@ -617,6 +622,7 @@ func (m *model) updateViewports() {
 	for category, style := range highlightStyles {
 		selectedStyles[category] = style.Copy().Bold(true)
 	}
+	selectedStyles[categoryInsertMarker] = selectedHunkMarkerStyle
 
 	connectorStyles := map[lineCategory]lipgloss.Style{
 		categoryDefault: lineNumberStyle,
@@ -680,9 +686,12 @@ func ensureVisible(viewportModel *viewport.Model, start int, total int) {
 
 func (m *model) scrollHorizontal(delta int) {
 	apply := func(viewportModel *viewport.Model) {
-		viewportModel.XOffset += delta
-		if viewportModel.XOffset < 0 {
-			viewportModel.XOffset = 0
+		if delta < 0 {
+			viewportModel.ScrollLeft(-delta)
+			return
+		}
+		if delta > 0 {
+			viewportModel.ScrollRight(delta)
 		}
 	}
 	apply(&m.viewportOurs)

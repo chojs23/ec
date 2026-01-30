@@ -214,12 +214,12 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 			if selected {
 				currentStart = len(lines)
 				lines = append(lines, lineInfo{
-					text:      fmt.Sprintf(">> insert %s here >>", resultLabel(effectiveResolution, preview)),
+					text:      fmt.Sprintf(">> selected hunk start (%s) >>", resultLabel(effectiveResolution, preview)),
 					category:  categoryInsertMarker,
 					highlight: true,
 					selected:  true,
 					underline: false,
-					dim:       true,
+					dim:       false,
 					connector: connectorForResult(selected),
 				})
 			}
@@ -243,6 +243,18 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 					selected:  selected,
 					underline: underline,
 					dim:       preview,
+					connector: connectorForResult(selected),
+				})
+			}
+
+			if selected {
+				lines = append(lines, lineInfo{
+					text:      ">> selected hunk end >>",
+					category:  categoryInsertMarker,
+					highlight: true,
+					selected:  true,
+					underline: false,
+					dim:       false,
 					connector: connectorForResult(selected),
 				})
 			}
