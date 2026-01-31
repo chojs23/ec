@@ -1,0 +1,13 @@
+first line
+<<<<<<< HEAD
+conflict 1 ours
+=======
+conflict 1 theirs
+>>>>>>> branch
+middle text
+<<<<<<< HEAD
+conflict 2 ours
+=======
+conflict 2 theirs
+>>>>>>> branch
+last line

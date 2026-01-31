@@ -1,0 +1,7 @@
+before text
+<<<<<<< HEAD
+ours content
+=======
+theirs content
+>>>>>>> branch
+after text
