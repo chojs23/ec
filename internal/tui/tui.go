@@ -561,8 +561,12 @@ func (m model) View() string {
 	if m.selectedSide == selectedOurs {
 		oursStyle = selectedSidePaneStyle
 	}
+	oursTitle := "OURS"
+	if label := formatLabel(seg.OursLabel); label != "" {
+		oursTitle = fmt.Sprintf("OURS (%s)", label)
+	}
 	oursPane := oursStyle.Render(
-		titleStyle.Render("OURS") + "\n" +
+		titleStyle.Render(oursTitle) + "\n" +
 			m.viewportOurs.View(),
 	)
 
@@ -579,8 +583,12 @@ func (m model) View() string {
 	if m.selectedSide == selectedTheirs {
 		theirsStyle = selectedSidePaneStyle
 	}
+	theirsTitle := "THEIRS"
+	if label := formatLabel(seg.TheirsLabel); label != "" {
+		theirsTitle = fmt.Sprintf("THEIRS (%s)", label)
+	}
 	theirsPane := theirsStyle.Render(
-		titleStyle.Render("THEIRS") + "\n" +
+		titleStyle.Render(theirsTitle) + "\n" +
 			m.viewportTheirs.View(),
 	)
 
@@ -748,4 +756,43 @@ func allResolved(doc markers.Document) bool {
 		}
 	}
 	return true
+}
+
+func formatLabel(label string) string {
+	_ = label
+	return ""
+}
+
+func firstHexRun(label string) (int, int) {
+	start := -1
+	for i, r := range label {
+		if isHexRune(r) {
+			start = i
+			break
+		}
+	}
+	if start == -1 {
+		return -1, -1
+	}
+	end := start
+	count := 0
+	for i := start; i < len(label); i++ {
+		if !isHexByte(label[i]) {
+			break
+		}
+		end = i + 1
+		count++
+	}
+	if count < 7 {
+		return -1, -1
+	}
+	return start, end
+}
+
+func isHexRune(r rune) bool {
+	return (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')
+}
+
+func isHexByte(b byte) bool {
+	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
 }

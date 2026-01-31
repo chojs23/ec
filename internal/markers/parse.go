@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var ErrMalformedConflict = errors.New("malformed conflict markers")
@@ -38,6 +39,7 @@ func Parse(data []byte) (Document, error) {
 		line := lines[i]
 		if hasLinePrefix(line, markStart) {
 			appendText(&textBuf)
+			oursLabel := parseLabel(line, markStart)
 
 			// Collect ours until base/mid.
 			i++
@@ -54,7 +56,9 @@ func Parse(data []byte) (Document, error) {
 
 			// Optional base section.
 			var base bytes.Buffer
+			baseLabel := ""
 			if hasLinePrefix(lines[i], markBase) {
+				baseLabel = parseLabel(lines[i], markBase)
 				i++
 				for ; i < len(lines); i++ {
 					if hasLinePrefix(lines[i], markMid) {
@@ -84,13 +88,17 @@ func Parse(data []byte) (Document, error) {
 			if i >= len(lines) {
 				return Document{}, fmt.Errorf("%w: missing end marker", ErrMalformedConflict)
 			}
+			theirsLabel := parseLabel(lines[i], markEnd)
 
 			segIndex := len(doc.Segments)
 			doc.Segments = append(doc.Segments, ConflictSegment{
-				Ours:       ours.Bytes(),
-				Base:       base.Bytes(),
-				Theirs:     theirs.Bytes(),
-				Resolution: ResolutionUnset,
+				Ours:        ours.Bytes(),
+				Base:        base.Bytes(),
+				Theirs:      theirs.Bytes(),
+				OursLabel:   oursLabel,
+				BaseLabel:   baseLabel,
+				TheirsLabel: theirsLabel,
+				Resolution:  ResolutionUnset,
 			})
 			doc.Conflicts = append(doc.Conflicts, ConflictRef{SegmentIndex: segIndex})
 			continue
@@ -125,6 +133,14 @@ func splitLinesKeepEOL(b []byte) [][]byte {
 		out = append(out, b[start:])
 	}
 	return out
+}
+
+func parseLabel(line []byte, prefix []byte) string {
+	if !bytes.HasPrefix(line, prefix) {
+		return ""
+	}
+	text := strings.TrimSpace(string(line[len(prefix):]))
+	return text
 }
 
 // IsResolved returns true if the data contains no conflict markers.

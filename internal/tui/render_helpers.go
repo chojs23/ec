@@ -139,6 +139,18 @@ func buildPaneLines(doc markers.Document, side paneSide, highlightConflict int, 
 				entries = theirsEntries
 			}
 
+			if selected && selectedSideMatchesPane(selectedSide, side) {
+				lines = append(lines, lineInfo{
+					text:      fmt.Sprintf(">> selected hunk start (%s) >>", sideLabel(side)),
+					category:  categoryInsertMarker,
+					highlight: true,
+					selected:  true,
+					underline: false,
+					dim:       false,
+					connector: connectorForSide(side),
+				})
+			}
+
 			resolution := s.Resolution
 			if resolution == markers.ResolutionUnset && selected {
 				resolution = resolutionFromSelection(selectedSide)
@@ -164,6 +176,18 @@ func buildPaneLines(doc markers.Document, side paneSide, highlightConflict int, 
 					underline: false,
 					dim:       dim,
 					connector: connector,
+				})
+			}
+
+			if selected && selectedSideMatchesPane(selectedSide, side) {
+				lines = append(lines, lineInfo{
+					text:      ">> selected hunk end >>",
+					category:  categoryInsertMarker,
+					highlight: true,
+					selected:  true,
+					underline: false,
+					dim:       false,
+					connector: connectorForSide(side),
 				})
 			}
 		}
@@ -213,15 +237,6 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 
 			if selected {
 				currentStart = len(lines)
-				lines = append(lines, lineInfo{
-					text:      fmt.Sprintf(">> selected hunk start (%s) >>", resultLabel(effectiveResolution, preview)),
-					category:  categoryInsertMarker,
-					highlight: true,
-					selected:  true,
-					underline: false,
-					dim:       false,
-					connector: connectorForResult(selected),
-				})
 			}
 
 			if len(entries) == 0 {
@@ -247,17 +262,6 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 				})
 			}
 
-			if selected {
-				lines = append(lines, lineInfo{
-					text:      ">> selected hunk end >>",
-					category:  categoryInsertMarker,
-					highlight: true,
-					selected:  true,
-					underline: false,
-					dim:       false,
-					connector: connectorForResult(selected),
-				})
-			}
 		}
 	}
 
@@ -474,6 +478,20 @@ func connectorForResult(selected bool) string {
 		return "|"
 	}
 	return " "
+}
+
+func selectedSideMatchesPane(selectedSide selectionSide, side paneSide) bool {
+	if selectedSide == selectedTheirs {
+		return side == paneTheirs
+	}
+	return side == paneOurs
+}
+
+func sideLabel(side paneSide) string {
+	if side == paneTheirs {
+		return "theirs"
+	}
+	return "ours"
 }
 
 func resultLabel(resolution markers.Resolution, preview bool) string {

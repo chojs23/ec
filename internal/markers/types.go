@@ -26,6 +26,10 @@ type ConflictSegment struct {
 	Base   []byte // may be nil if not present
 	Theirs []byte
 
+	OursLabel   string
+	BaseLabel   string
+	TheirsLabel string
+
 	// For future: labels (e.g., HEAD, branch name)
 	Resolution Resolution
 }
