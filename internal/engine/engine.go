@@ -81,7 +81,7 @@ func ApplyAllAndWrite(ctx context.Context, opts cli.Options) error {
 		return nil
 	}
 
-	if !opts.NoBackup {
+	if opts.Backup {
 		bak := opts.MergedPath + ".easy-conflict.bak"
 		if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
 			return fmt.Errorf("write backup %s: %w", filepath.Base(bak), err)

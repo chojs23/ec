@@ -13,6 +13,9 @@ var ErrHelp = errors.New("help requested")
 func Parse(args []string) (Options, error) {
 	var opts Options
 	var help bool
+	var backup bool
+
+	opts.Backup = false
 
 	fs := flag.NewFlagSet("easy-conflict", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -23,7 +26,7 @@ func Parse(args []string) (Options, error) {
 	fs.StringVar(&opts.MergedPath, "merged", "", "Path to MERGED file (output target)")
 	fs.StringVar(&opts.ApplyAll, "apply-all", "", "Non-interactive resolution: ours|theirs|both")
 	fs.BoolVar(&opts.Check, "check", false, "Exit 0 if resolved (no conflict markers), else 1")
-	fs.BoolVar(&opts.NoBackup, "no-backup", false, "Do not create $MERGED.easy-conflict.bak on write")
+	fs.BoolVar(&backup, "backup", false, "Create $MERGED.easy-conflict.bak on write")
 	fs.BoolVar(&opts.Verbose, "v", false, "Verbose logging to stderr")
 	fs.BoolVar(&help, "help", false, "Show help")
 	fs.BoolVar(&help, "h", false, "Show help")
@@ -34,6 +37,10 @@ func Parse(args []string) (Options, error) {
 	}
 	if help {
 		return Options{}, ErrHelp
+	}
+
+	if backup {
+		opts.Backup = true
 	}
 
 	// Positional mergetool form: <BASE> <LOCAL> <REMOTE> <MERGED>
@@ -94,7 +101,7 @@ No-args mode:
 	  conflicted files under the current directory and prompts to select one.
 
 Options:
-	  --no-backup                 Do not create $MERGED.easy-conflict.bak
+	  --backup                    Create $MERGED.easy-conflict.bak
 	  -v                          Verbose logging
 `)
 }

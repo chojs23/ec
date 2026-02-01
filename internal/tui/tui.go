@@ -234,7 +234,7 @@ func (m *model) openEditor() tea.Cmd {
 			return editorFinishedMsg{err: fmt.Errorf("read merged for backup: %w", err)}
 		}
 
-		if !m.opts.NoBackup {
+		if m.opts.Backup {
 			bak := m.opts.MergedPath + ".easy-conflict.bak"
 			if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
 				return editorFinishedMsg{err: fmt.Errorf("write backup %s: %w", filepath.Base(bak), err)}
@@ -732,7 +732,7 @@ func (m *model) writeResolved() error {
 	}
 
 	// Write backup if not disabled
-	if !m.opts.NoBackup {
+	if m.opts.Backup {
 		bak := m.opts.MergedPath + ".easy-conflict.bak"
 		if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
 			return fmt.Errorf("write backup %s: %w", filepath.Base(bak), err)
