@@ -27,6 +27,7 @@ const (
 	categoryRemoved
 	categoryConflicted
 	categoryInsertMarker
+	categoryResolved
 )
 
 func splitLines(content []byte) []string {
@@ -221,12 +222,12 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 				for _, line := range manualLines {
 					lines = append(lines, lineInfo{
 						text:      line,
-						category:  categoryDefault,
+						category:  categoryResolved,
 						highlight: false,
 						selected:  selected,
 						underline: underline,
 						dim:       false,
-						connector: connectorForResult(selected),
+						connector: connectorForResult(true, selected),
 					})
 				}
 				continue
@@ -259,24 +260,34 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 
 			if len(entries) == 0 {
 				if preview {
-					lines = append(lines, lineInfo{text: "[unresolved conflict]", category: categoryConflicted, dim: true})
+					lines = append(lines, lineInfo{
+						text:      "[unresolved conflict]",
+						category:  categoryConflicted,
+						dim:       true,
+						connector: connectorForResult(false, selected),
+					})
 				}
 				continue
 			}
 
+			resolved := !preview
 			for _, entry := range entries {
 				if entry.category == categoryRemoved {
 					continue
 				}
 				highlight := entry.category != categoryDefault
+				category := entry.category
+				if resolved {
+					category = categoryResolved
+				}
 				lines = append(lines, lineInfo{
 					text:      entry.text,
-					category:  entry.category,
+					category:  category,
 					highlight: highlight,
 					selected:  selected,
 					underline: underline,
 					dim:       preview,
-					connector: connectorForResult(selected),
+					connector: connectorForResult(resolved, selected),
 				})
 			}
 
@@ -491,7 +502,10 @@ func connectorForSide(side paneSide) string {
 	}
 }
 
-func connectorForResult(selected bool) string {
+func connectorForResult(resolved bool, selected bool) string {
+	if resolved {
+		return "v"
+	}
 	if selected {
 		return "|"
 	}

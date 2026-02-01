@@ -117,6 +117,10 @@ var (
 				Foreground(lipgloss.Color("196")).
 				Bold(true)
 
+	resultResolvedMarkerStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("42")).
+					Bold(true)
+
 	resultResolvedPaneStyle = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(lipgloss.Color("42")).
@@ -585,10 +589,13 @@ func (m model) View() string {
 
 	// Resolution status
 	statusText := "Unresolved"
+	statusStyle := statusUnresolvedStyle
 	if _, ok := m.manualResolved[m.currentConflict]; ok {
 		statusText = "Resolved (manual)"
+		statusStyle = statusResolvedStyle
 	} else if seg.Resolution != markers.ResolutionUnset {
 		statusText = fmt.Sprintf("Resolved: %s", seg.Resolution)
+		statusStyle = statusResolvedStyle
 	}
 
 	// Render panes
@@ -609,8 +616,13 @@ func (m model) View() string {
 	if allResolved(m.doc, m.manualResolved) {
 		resultStyle = resultResolvedPaneStyle
 	}
+	resultTitle := lipgloss.NewStyle().
+		Bold(true).
+		Background(lipgloss.Color("62")).
+		Padding(0, 2).
+		Render("RESULT " + statusStyle.Render("("+statusText+")"))
 	resultPane := resultStyle.Render(
-		titleStyle.Render(fmt.Sprintf("RESULT (%s)", statusText)) + "\n" +
+		resultTitle + "\n" +
 			m.viewportResult.View(),
 	)
 
@@ -668,7 +680,8 @@ func (m *model) updateViewports() {
 	selectedStyles[categoryInsertMarker] = selectedHunkMarkerStyle
 
 	connectorStyles := map[lineCategory]lipgloss.Style{
-		categoryDefault: lineNumberStyle,
+		categoryDefault:  lineNumberStyle,
+		categoryResolved: resultResolvedMarkerStyle,
 	}
 	for category, style := range highlightStyles {
 		connectorStyles[category] = style
