@@ -12,6 +12,7 @@ import (
 
 	"github.com/chojs23/easy-conflict/internal/cli"
 	"github.com/chojs23/easy-conflict/internal/gitutil"
+	"github.com/chojs23/easy-conflict/internal/tui"
 )
 
 var errNoConflicts = errors.New("no conflicted files found")
@@ -41,7 +42,7 @@ func prepareInteractiveFromRepo(ctx context.Context, opts *cli.Options) (func(),
 		return nil, errNoConflicts
 	}
 
-	selected, err := selectPath(paths)
+	selected, err := selectPathInteractive(ctx, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -115,6 +116,28 @@ func selectPath(paths []string) (string, error) {
 	}
 
 	return "", fmt.Errorf("invalid selection")
+}
+
+func selectPathInteractive(ctx context.Context, paths []string) (string, error) {
+	if len(paths) == 1 {
+		return paths[0], nil
+	}
+	if isInteractiveTTY() {
+		return tui.SelectFile(ctx, paths)
+	}
+	return selectPath(paths)
+}
+
+func isInteractiveTTY() bool {
+	return isTTY(os.Stdin) && isTTY(os.Stdout)
+}
+
+func isTTY(file *os.File) bool {
+	info, err := file.Stat()
+	if err != nil {
+		return false
+	}
+	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
 func writeTempStages(base, local, remote []byte) (string, string, string, func(), error) {
