@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -136,6 +137,7 @@ type model struct {
 	doc             markers.Document
 	currentConflict int
 	selectedSide    selectionSide
+	manualResolved  map[int][]byte
 	pendingScroll   bool
 	viewportOurs    viewport.Model
 	viewportResult  viewport.Model
@@ -168,6 +170,15 @@ func Run(ctx context.Context, opts cli.Options) error {
 		return fmt.Errorf("failed to parse conflicts: %w", err)
 	}
 
+	manualResolved := map[int][]byte{}
+	if mergedBytes, err := os.ReadFile(opts.MergedPath); err == nil {
+		updated, manual, updateErr := applyMergedResolutions(doc, mergedBytes)
+		if updateErr == nil {
+			doc = updated
+			manualResolved = manual
+		}
+	}
+
 	// Validate base completeness unless explicitly allowed to proceed without it.
 	if !opts.AllowMissingBase {
 		if err := engine.ValidateBaseCompleteness(doc); err != nil {
@@ -188,6 +199,7 @@ func Run(ctx context.Context, opts cli.Options) error {
 		doc:             doc,
 		currentConflict: 0,
 		selectedSide:    selectedOurs,
+		manualResolved:  manualResolved,
 		pendingScroll:   true,
 	}
 
@@ -388,6 +400,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = fmt.Errorf("failed to apply ours: %w", err)
 				return m, tea.Quit
 			}
+			delete(m.manualResolved, m.currentConflict)
 			m.doc = m.state.Document()
 			m.updateViewports()
 
@@ -397,6 +410,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = fmt.Errorf("failed to apply theirs: %w", err)
 				return m, tea.Quit
 			}
+			delete(m.manualResolved, m.currentConflict)
 			m.doc = m.state.Document()
 			m.updateViewports()
 
@@ -406,6 +420,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = fmt.Errorf("failed to apply ours to all: %w", err)
 				return m, tea.Quit
 			}
+			m.manualResolved = map[int][]byte{}
 			m.doc = m.state.Document()
 			m.updateViewports()
 
@@ -415,6 +430,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = fmt.Errorf("failed to apply theirs to all: %w", err)
 				return m, tea.Quit
 			}
+			m.manualResolved = map[int][]byte{}
 			m.doc = m.state.Document()
 			m.updateViewports()
 
@@ -431,6 +447,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = fmt.Errorf("failed to apply selection: %w", err)
 				return m, tea.Quit
 			}
+			delete(m.manualResolved, m.currentConflict)
 			m.doc = m.state.Document()
 			m.updateViewports()
 
@@ -440,6 +457,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = fmt.Errorf("failed to discard selection: %w", err)
 				return m, tea.Quit
 			}
+			delete(m.manualResolved, m.currentConflict)
 			m.doc = m.state.Document()
 			m.updateViewports()
 
@@ -449,6 +467,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = fmt.Errorf("failed to apply both: %w", err)
 				return m, tea.Quit
 			}
+			delete(m.manualResolved, m.currentConflict)
 			m.doc = m.state.Document()
 			m.updateViewports()
 
@@ -458,6 +477,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.err = fmt.Errorf("failed to apply none: %w", err)
 				return m, tea.Quit
 			}
+			delete(m.manualResolved, m.currentConflict)
 			m.doc = m.state.Document()
 			m.updateViewports()
 
@@ -565,7 +585,9 @@ func (m model) View() string {
 
 	// Resolution status
 	statusText := "Unresolved"
-	if seg.Resolution != markers.ResolutionUnset {
+	if _, ok := m.manualResolved[m.currentConflict]; ok {
+		statusText = "Resolved (manual)"
+	} else if seg.Resolution != markers.ResolutionUnset {
 		statusText = fmt.Sprintf("Resolved: %s", seg.Resolution)
 	}
 
@@ -584,7 +606,7 @@ func (m model) View() string {
 	)
 
 	resultStyle := resultUnresolvedPaneStyle
-	if allResolved(m.doc) {
+	if allResolved(m.doc, m.manualResolved) {
 		resultStyle = resultResolvedPaneStyle
 	}
 	resultPane := resultStyle.Render(
@@ -669,7 +691,7 @@ func (m *model) updateViewports() {
 	}
 
 	// Update result pane with full resolved preview
-	resultLines, resultStart := buildResultLines(m.doc, m.currentConflict, m.selectedSide)
+	resultLines, resultStart := buildResultLines(m.doc, m.currentConflict, m.selectedSide, m.manualResolved)
 	resultContent := renderLines(resultLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles)
 	m.viewportResult.SetContent(resultContent)
 	if m.pendingScroll {
@@ -733,7 +755,7 @@ func (m *model) writeResolved() error {
 		return fmt.Errorf("read merged for backup: %w", err)
 	}
 
-	// Write backup if not disabled
+	// Write backup if enabled
 	if m.opts.Backup {
 		bak := m.opts.MergedPath + ".easy-conflict.bak"
 		if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
@@ -758,8 +780,11 @@ func (m *model) writeResolved() error {
 	return nil
 }
 
-func allResolved(doc markers.Document) bool {
-	for _, ref := range doc.Conflicts {
+func allResolved(doc markers.Document, manualResolved map[int][]byte) bool {
+	for idx, ref := range doc.Conflicts {
+		if _, ok := manualResolved[idx]; ok {
+			continue
+		}
 		seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
 		if !ok {
 			return false
@@ -808,4 +833,176 @@ func isHexRune(r rune) bool {
 
 func isHexByte(b byte) bool {
 	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
+func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.Document, map[int][]byte, error) {
+	mergedLines := splitLinesKeepEOL(mergedBytes)
+	pos := 0
+	manualResolved := map[int][]byte{}
+
+	conflictIndex := -1
+	for i, seg := range doc.Segments {
+		switch s := seg.(type) {
+		case markers.TextSegment:
+			textLines := splitLinesKeepEOL(s.Bytes)
+			if len(textLines) == 0 {
+				continue
+			}
+			idx := findSubslice(mergedLines, pos, textLines)
+			if idx == -1 {
+				return doc, manualResolved, fmt.Errorf("failed to align text segment")
+			}
+			pos = idx + len(textLines)
+
+		case markers.ConflictSegment:
+			conflictIndex++
+			nextTextLines := nextTextSegmentLines(doc.Segments, i+1)
+			nextIdx := -1
+			if len(nextTextLines) > 0 {
+				nextIdx = findSubslice(mergedLines, pos, nextTextLines)
+			}
+			if nextIdx == -1 {
+				nextIdx = len(mergedLines)
+			}
+			if nextIdx < pos {
+				return doc, manualResolved, fmt.Errorf("failed to align conflict segment")
+			}
+			spanLines := mergedLines[pos:nextIdx]
+			if containsConflictMarkers(spanLines) {
+				pos = nextIdx
+				continue
+			}
+			resolution, matched := matchResolution(spanLines, s)
+			if matched {
+				s.Resolution = resolution
+				doc.Segments[i] = s
+				pos = nextIdx
+				continue
+			}
+			manualResolved[conflictIndex] = joinLines(spanLines)
+			pos = nextIdx
+		}
+	}
+
+	return doc, manualResolved, nil
+}
+
+func nextTextSegmentLines(segments []markers.Segment, start int) [][]byte {
+	for i := start; i < len(segments); i++ {
+		if text, ok := segments[i].(markers.TextSegment); ok {
+			lines := splitLinesKeepEOL(text.Bytes)
+			if len(lines) > 0 {
+				return lines
+			}
+		}
+	}
+	return nil
+}
+
+func matchResolution(lines [][]byte, seg markers.ConflictSegment) (markers.Resolution, bool) {
+	ours := splitLinesKeepEOL(seg.Ours)
+	theirs := splitLinesKeepEOL(seg.Theirs)
+	both := append(append([][]byte{}, ours...), theirs...)
+
+	if linesEqual(lines, ours) {
+		return markers.ResolutionOurs, true
+	}
+	if linesEqual(lines, theirs) {
+		return markers.ResolutionTheirs, true
+	}
+	if linesEqual(lines, both) {
+		return markers.ResolutionBoth, true
+	}
+	if len(lines) == 0 {
+		return markers.ResolutionNone, true
+	}
+	return markers.ResolutionUnset, false
+}
+
+func containsConflictMarkers(lines [][]byte) bool {
+	for _, line := range lines {
+		if bytes.HasPrefix(line, []byte("<<<<<<<")) ||
+			bytes.HasPrefix(line, []byte("|||||||")) ||
+			bytes.HasPrefix(line, []byte("=======")) ||
+			bytes.HasPrefix(line, []byte(">>>>>>>")) {
+			return true
+		}
+	}
+	return false
+}
+
+func splitLinesKeepEOL(data []byte) [][]byte {
+	if len(data) == 0 {
+		return nil
+	}
+
+	var out [][]byte
+	start := 0
+	for i := 0; i < len(data); i++ {
+		if data[i] == '\n' {
+			out = append(out, data[start:i+1])
+			start = i + 1
+		}
+	}
+	if start < len(data) {
+		out = append(out, data[start:])
+	}
+	return out
+}
+
+func findSubslice(haystack [][]byte, start int, needle [][]byte) int {
+	if len(needle) == 0 {
+		return start
+	}
+	if start < 0 {
+		start = 0
+	}
+	for i := start; i+len(needle) <= len(haystack); i++ {
+		matched := true
+		for j := range needle {
+			if !bytesEqual(haystack[i+j], needle[j]) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return i
+		}
+	}
+	return -1
+}
+
+func linesEqual(left [][]byte, right [][]byte) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if !bytesEqual(left[i], right[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func bytesEqual(left []byte, right []byte) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func joinLines(lines [][]byte) []byte {
+	if len(lines) == 0 {
+		return nil
+	}
+	var b bytes.Buffer
+	for _, line := range lines {
+		b.Write(line)
+	}
+	return b.Bytes()
 }

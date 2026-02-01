@@ -199,7 +199,7 @@ func buildPaneLines(doc markers.Document, side paneSide, highlightConflict int, 
 	return lines, currentStart
 }
 
-func buildResultLines(doc markers.Document, highlightConflict int, selectedSide selectionSide) ([]lineInfo, int) {
+func buildResultLines(doc markers.Document, highlightConflict int, selectedSide selectionSide, manualResolved map[int][]byte) ([]lineInfo, int) {
 	var lines []lineInfo
 	conflictIndex := -1
 	currentStart := -1
@@ -213,6 +213,24 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 			conflictIndex++
 			selected := conflictIndex == highlightConflict
 			underline := selected
+			if manualBytes, ok := manualResolved[conflictIndex]; ok {
+				manualLines := splitLines(manualBytes)
+				if selected {
+					currentStart = len(lines)
+				}
+				for _, line := range manualLines {
+					lines = append(lines, lineInfo{
+						text:      line,
+						category:  categoryDefault,
+						highlight: false,
+						selected:  selected,
+						underline: underline,
+						dim:       false,
+						connector: connectorForResult(selected),
+					})
+				}
+				continue
+			}
 			preview := s.Resolution == markers.ResolutionUnset
 			effectiveResolution := s.Resolution
 			if preview {
