@@ -34,19 +34,39 @@ func Run(ctx context.Context, opts cli.Options) int {
 
 	// Interactive TUI
 	if opts.BasePath == "" && opts.LocalPath == "" && opts.RemotePath == "" && opts.MergedPath == "" {
-		cleanup, err := prepareInteractiveFromRepo(ctx, &opts)
-		if err != nil {
-			if errors.Is(err, errNoConflicts) {
-				fmt.Fprintln(os.Stdout, "No conflicted files found in the current directory.")
-				return 0
+		baseOpts := opts
+		for {
+			opts = baseOpts
+			cleanup, err := prepareInteractiveFromRepo(ctx, &opts)
+			if err != nil {
+				if errors.Is(err, errNoConflicts) {
+					fmt.Fprintln(os.Stdout, "No conflicted files found in the current directory.")
+					return 0
+				}
+				if errors.Is(err, tui.ErrSelectorQuit) {
+					return 0
+				}
+				fmt.Fprintln(os.Stderr, err)
+				return 2
 			}
-			fmt.Fprintln(os.Stderr, err)
-			return 2
+
+			err = tui.Run(ctx, opts)
+			cleanup()
+			if err != nil {
+				if errors.Is(err, tui.ErrBackToSelector) {
+					continue
+				}
+				fmt.Fprintln(os.Stderr, err)
+				return 2
+			}
+			return 0
 		}
-		defer cleanup()
 	}
 
 	if err := tui.Run(ctx, opts); err != nil {
+		if errors.Is(err, tui.ErrBackToSelector) {
+			return 0
+		}
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}

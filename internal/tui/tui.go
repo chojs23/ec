@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -125,6 +126,8 @@ var (
 					BorderForeground(lipgloss.Color("196")).
 					Padding(0, 1)
 )
+
+var ErrBackToSelector = fmt.Errorf("back to selector")
 
 type model struct {
 	ctx             context.Context
@@ -340,7 +343,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q":
+			m.err = ErrBackToSelector
+			m.quitting = true
+			return m, tea.Quit
+
+		case "ctrl+c":
 			m.quitting = true
 			return m, tea.Quit
 
@@ -529,6 +537,9 @@ func (m model) View() string {
 
 	if m.quitting {
 		if m.err != nil {
+			if errors.Is(m.err, ErrBackToSelector) {
+				return "\n  Returning to selector...\n"
+			}
 			return fmt.Sprintf("\n  Error: %v\n", m.err)
 		}
 		return "\n  Resolved! File written.\n"
@@ -601,7 +612,7 @@ func (m model) View() string {
 	}
 
 	footer := footerStyle.Width(m.width).Render(
-		fmt.Sprintf("n: next | p: prev | j/k: scroll | H/L: scroll | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | O: ours all | T: theirs all | b: both | x: none | u: undo | e: editor | w: write & quit | q: quit%s", undoInfo),
+		fmt.Sprintf("n: next | p: prev | j/k: scroll | H/L: scroll | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | O: ours all | T: theirs all | b: both | x: none | u: undo | e: editor | w: write & quit | q: back to selector%s", undoInfo),
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, panes, footer)

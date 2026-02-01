@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/chojs23/easy-conflict/internal/cli"
+	"github.com/chojs23/easy-conflict/internal/engine"
 	"github.com/chojs23/easy-conflict/internal/gitutil"
 	"github.com/chojs23/easy-conflict/internal/tui"
 )
@@ -42,7 +43,7 @@ func prepareInteractiveFromRepo(ctx context.Context, opts *cli.Options) (func(),
 		return nil, errNoConflicts
 	}
 
-	selected, err := selectPathInteractive(ctx, paths)
+	selected, err := selectPathInteractive(ctx, repoRoot, paths)
 	if err != nil {
 		return nil, err
 	}
@@ -118,12 +119,16 @@ func selectPath(paths []string) (string, error) {
 	return "", fmt.Errorf("invalid selection")
 }
 
-func selectPathInteractive(ctx context.Context, paths []string) (string, error) {
+func selectPathInteractive(ctx context.Context, repoRoot string, paths []string) (string, error) {
 	if len(paths) == 1 {
 		return paths[0], nil
 	}
 	if isInteractiveTTY() {
-		return tui.SelectFile(ctx, paths)
+		candidates, err := buildFileCandidates(repoRoot, paths)
+		if err != nil {
+			return "", err
+		}
+		return tui.SelectFile(ctx, candidates)
 	}
 	return selectPath(paths)
 }
@@ -138,6 +143,22 @@ func isTTY(file *os.File) bool {
 		return false
 	}
 	return (info.Mode() & os.ModeCharDevice) != 0
+}
+
+func buildFileCandidates(repoRoot string, paths []string) ([]tui.FileCandidate, error) {
+	candidates := make([]tui.FileCandidate, 0, len(paths))
+	for _, path := range paths {
+		mergedPath := path
+		if !filepath.IsAbs(mergedPath) {
+			mergedPath = filepath.Join(repoRoot, path)
+		}
+		resolved, err := engine.CheckResolvedFile(mergedPath)
+		if err != nil {
+			return nil, fmt.Errorf("check resolved %s: %w", path, err)
+		}
+		candidates = append(candidates, tui.FileCandidate{Path: path, Resolved: resolved})
+	}
+	return candidates, nil
 }
 
 func writeTempStages(base, local, remote []byte) (string, string, string, func(), error) {

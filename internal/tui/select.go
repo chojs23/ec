@@ -7,10 +7,17 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
+type FileCandidate struct {
+	Path     string
+	Resolved bool
+}
+
 type fileItem struct {
-	path string
+	path     string
+	resolved bool
 }
 
 func (f fileItem) Title() string {
@@ -26,6 +33,11 @@ func (f fileItem) FilterValue() string {
 }
 
 type fileItemDelegate struct{}
+
+var (
+	resolvedLabelStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
+	unresolvedLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+)
 
 func (d fileItemDelegate) Height() int {
 	return 1
@@ -48,7 +60,15 @@ func (d fileItemDelegate) Render(w io.Writer, m list.Model, index int, item list
 	if index == m.Index() {
 		cursor = "> "
 	}
-	fmt.Fprint(w, cursor+file.path)
+	label := "unresolved"
+	labelStyle := unresolvedLabelStyle
+	if file.resolved {
+		label = "resolved"
+		labelStyle = resolvedLabelStyle
+	}
+	labelWidth := len("unresolved")
+	labelText := fmt.Sprintf("%*s", labelWidth, label)
+	fmt.Fprint(w, cursor+labelStyle.Render(labelText)+"  "+file.path)
 }
 
 type fileSelectModel struct {
@@ -57,17 +77,17 @@ type fileSelectModel struct {
 	err      error
 }
 
-var errSelectionCanceled = fmt.Errorf("selection canceled")
+var ErrSelectorQuit = fmt.Errorf("selector quit")
 
 // SelectFile opens a TUI selector and returns the chosen repo-relative path.
-func SelectFile(ctx context.Context, paths []string) (string, error) {
-	if len(paths) == 1 {
-		return paths[0], nil
+func SelectFile(ctx context.Context, candidates []FileCandidate) (string, error) {
+	if len(candidates) == 1 {
+		return candidates[0].Path, nil
 	}
 
-	items := make([]list.Item, 0, len(paths))
-	for _, path := range paths {
-		items = append(items, fileItem{path: path})
+	items := make([]list.Item, 0, len(candidates))
+	for _, candidate := range candidates {
+		items = append(items, fileItem{path: candidate.Path, resolved: candidate.Resolved})
 	}
 
 	model := fileSelectModel{list: list.New(items, fileItemDelegate{}, 0, 0)}
@@ -105,7 +125,7 @@ func (m fileSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
-			m.err = errSelectionCanceled
+			m.err = ErrSelectorQuit
 			return m, tea.Quit
 		case "enter":
 			if item, ok := m.list.SelectedItem().(fileItem); ok {
