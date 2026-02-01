@@ -469,12 +469,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 		case "w":
-			// Write and quit
+			// Write resolved file
 			if err := m.writeResolved(); err != nil {
 				m.err = fmt.Errorf("failed to write resolved: %w", err)
+				return m, tea.Quit
 			}
-			m.quitting = true
-			return m, tea.Quit
+			m.doc = m.state.Document()
+			m.updateViewports()
+			return m, nil
 
 		case "e":
 			return m, m.openEditor()
@@ -612,7 +614,7 @@ func (m model) View() string {
 	}
 
 	footer := footerStyle.Width(m.width).Render(
-		fmt.Sprintf("n: next | p: prev | j/k: scroll | H/L: scroll | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | O: ours all | T: theirs all | b: both | x: none | u: undo | e: editor | w: write & quit | q: back to selector%s", undoInfo),
+		fmt.Sprintf("n: next | p: prev | j/k: scroll | H/L: scroll | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | O: ours all | T: theirs all | b: both | x: none | u: undo | e: editor | w: write | q: back to selector%s", undoInfo),
 	)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, panes, footer)
