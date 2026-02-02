@@ -36,6 +36,9 @@ func splitLines(content []byte) []string {
 	}
 
 	lines := strings.Split(string(content), "\n")
+	if len(lines) > 0 && content[len(content)-1] == '\n' {
+		lines = lines[:len(lines)-1]
+	}
 	for i, line := range lines {
 		lines[i] = strings.TrimSuffix(line, "\r")
 	}
