@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -130,6 +131,15 @@ var (
 					Border(lipgloss.RoundedBorder()).
 					BorderForeground(lipgloss.Color("196")).
 					Padding(0, 1)
+
+	toastStyle = lipgloss.NewStyle().
+			Background(lipgloss.Color("22")).
+			Foreground(lipgloss.Color("230")).
+			Padding(0, 1)
+
+	toastLineStyle = lipgloss.NewStyle().
+			Align(lipgloss.Right).
+			Padding(0, 2)
 )
 
 var ErrBackToSelector = fmt.Errorf("back to selector")
@@ -150,6 +160,8 @@ type model struct {
 	width           int
 	height          int
 	quitting        bool
+	toastMessage    string
+	toastSeq        int
 	err             error
 }
 
@@ -227,6 +239,19 @@ func (m model) Init() tea.Cmd {
 
 type editorFinishedMsg struct {
 	err error
+}
+
+type toastExpiredMsg struct {
+	id int
+}
+
+func (m *model) showToast(message string, duration time.Duration) tea.Cmd {
+	m.toastMessage = message
+	m.toastSeq++
+	seq := m.toastSeq
+	return tea.Tick(duration*time.Second, func(time.Time) tea.Msg {
+		return toastExpiredMsg{id: seq}
+	})
 }
 
 func (m *model) openEditor() tea.Cmd {
@@ -355,6 +380,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 
+		return m, nil
+
+	case toastExpiredMsg:
+		if msg.id == m.toastSeq {
+			m.toastMessage = ""
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -500,7 +531,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.doc = m.state.Document()
 			m.updateViewports()
-			return m, nil
+			return m, m.showToast("Saved", 2)
 
 		case "e":
 			return m, m.openEditor()
@@ -513,7 +544,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Calculate pane dimensions
 			headerHeight := 2
-			footerHeight := 2
+			footerHeight := 3
 			contentHeight := m.height - headerHeight - footerHeight - 6 // borders + padding
 
 			paneWidth := (m.width - 12) / 3 // 3 panes with borders
@@ -529,7 +560,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.height = msg.Height
 
 			headerHeight := 2
-			footerHeight := 2
+			footerHeight := 3
 			contentHeight := m.height - headerHeight - footerHeight - 6
 
 			paneWidth := (m.width - 12) / 3
@@ -647,11 +678,20 @@ func (m model) View() string {
 		undoInfo = fmt.Sprintf(" | Undo available: %d", m.state.UndoDepth())
 	}
 
-	footer := footerStyle.Width(m.width).Render(
+	footerText := footerStyle.Width(m.width).Render(
 		fmt.Sprintf("n: next | p: prev | j/k: scroll | H/L: scroll | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | O: ours all | T: theirs all | b: both | x: none | u: undo | e: editor | w: write | q: back to selector%s", undoInfo),
 	)
+	footer := lipgloss.JoinVertical(lipgloss.Left, footerText, m.renderToastLine())
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, panes, footer)
+}
+
+func (m model) renderToastLine() string {
+	content := ""
+	if m.toastMessage != "" {
+		content = toastStyle.Render(m.toastMessage)
+	}
+	return toastLineStyle.Width(m.width).Render(content)
 }
 
 func (m *model) updateViewports() {
