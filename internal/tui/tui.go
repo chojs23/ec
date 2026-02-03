@@ -77,7 +77,7 @@ var (
 				Foreground(lipgloss.Color("230"))
 
 	resultLineStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("252"))
+			Foreground(lipgloss.Color("231"))
 
 	resultHighlightStyle = lipgloss.NewStyle().
 				Background(lipgloss.Color("60")).
@@ -96,7 +96,7 @@ var (
 				Foreground(lipgloss.Color("250"))
 
 	conflictedLineStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("88")).
+				Background(lipgloss.Color("131")).
 				Foreground(lipgloss.Color("231"))
 
 	insertMarkerStyle = lipgloss.NewStyle().
@@ -796,14 +796,14 @@ func (m *model) updateViewports() {
 		oursLines, oursStart = buildPaneLinesFromDoc(m.doc, paneOurs, m.currentConflict, m.selectedSide)
 		theirsLines, theirsStart = buildPaneLinesFromDoc(m.doc, paneTheirs, m.currentConflict, m.selectedSide)
 	}
-	oursContent := renderLines(oursLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles)
+	oursContent := renderLines(oursLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles, false)
 	m.viewportOurs.SetContent(oursContent)
 	if m.pendingScroll {
 		ensureVisible(&m.viewportOurs, oursStart, len(oursLines))
 	}
 
 	// Update theirs pane (full file, highlight conflicts)
-	theirsContent := renderLines(theirsLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles)
+	theirsContent := renderLines(theirsLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles, false)
 	m.viewportTheirs.SetContent(theirsContent)
 	if m.pendingScroll {
 		ensureVisible(&m.viewportTheirs, theirsStart, len(theirsLines))
@@ -819,7 +819,7 @@ func (m *model) updateViewports() {
 	} else {
 		resultLines, resultStart = buildResultLines(m.doc, m.currentConflict, m.selectedSide, m.manualResolved)
 	}
-	resultContent := renderLines(resultLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles)
+	resultContent := renderLines(resultLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles, true)
 	m.viewportResult.SetContent(resultContent)
 	if m.pendingScroll {
 		ensureVisible(&m.viewportResult, resultStart, len(resultLines))

@@ -52,6 +52,7 @@ func renderLines(
 	highlightStyles map[lineCategory]lipgloss.Style,
 	selectedStyles map[lineCategory]lipgloss.Style,
 	connectorStyles map[lineCategory]lipgloss.Style,
+	useWhiteDim bool,
 ) string {
 	if len(lines) == 0 {
 		return ""
@@ -76,7 +77,15 @@ func renderLines(
 			style = styleForCategory(selectedStyles, line.category, style)
 		}
 		if line.dim {
-			style = style.Copy().Foreground(lipgloss.Color("244"))
+			// In the result pane we dim unresolved-preview lines by muting the text.
+			// For conflicted lines, keep strong contrast against the (light) red background.
+			if useWhiteDim {
+				style = style.Copy().Foreground(lipgloss.Color("231"))
+			} else if line.category == categoryConflicted {
+				style = style.Copy().Foreground(lipgloss.Color("16"))
+			} else {
+				style = style.Copy().Foreground(lipgloss.Color("244"))
+			}
 		}
 		if line.underline {
 			style = style.Copy().Underline(true)
@@ -90,7 +99,7 @@ func renderLines(
 			connectorStyle = styleForCategory(selectedStyles, line.category, connectorStyle)
 		}
 
-		prefix := numberStyle.Render(numberText) + " " + connectorStyle.Render(connector) + " "
+		prefix := numberStyle.Render(numberText) + " " + connectorStyle.Render(connector+" ")
 
 		b.WriteString(prefix + style.Render(line.text))
 		if i < len(lines)-1 {
