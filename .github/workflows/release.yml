@@ -70,10 +70,6 @@ jobs:
             dist/ec-linux-arm64
             dist/ec-darwin-amd64
             dist/ec-darwin-arm64
-            dist/ec-linux-amd64
-            dist/ec-linux-arm64
-            dist/ec-darwin-amd64
-            dist/ec-darwin-arm64
             dist/checksums.txt
           draft: false
           prerelease: false
