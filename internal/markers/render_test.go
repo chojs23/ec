@@ -157,6 +157,51 @@ func TestRenderResolvedMultiple(t *testing.T) {
 	}
 }
 
+func TestRenderResolvedComplexMixed(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "complex_mixed.input"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	conflict0 := doc.Segments[doc.Conflicts[0].SegmentIndex].(ConflictSegment)
+	conflict0.Resolution = ResolutionOurs
+	doc.Segments[doc.Conflicts[0].SegmentIndex] = conflict0
+
+	conflict1 := doc.Segments[doc.Conflicts[1].SegmentIndex].(ConflictSegment)
+	conflict1.Resolution = ResolutionTheirs
+	doc.Segments[doc.Conflicts[1].SegmentIndex] = conflict1
+
+	conflict2 := doc.Segments[doc.Conflicts[2].SegmentIndex].(ConflictSegment)
+	conflict2.Resolution = ResolutionNone
+	doc.Segments[doc.Conflicts[2].SegmentIndex] = conflict2
+
+	conflict3 := doc.Segments[doc.Conflicts[3].SegmentIndex].(ConflictSegment)
+	conflict3.Resolution = ResolutionBoth
+	doc.Segments[doc.Conflicts[3].SegmentIndex] = conflict3
+
+	rendered, err := RenderResolved(doc)
+	if err != nil {
+		t.Fatalf("RenderResolved failed: %v", err)
+	}
+
+	expected := "intro line\n" +
+		"ours line 1\n" +
+		"ours line 2\n" +
+		"middle line\n" +
+		"theirs only\n" +
+		"tail line\n" +
+		"end line\n" +
+		"theirs without ours\n"
+	if string(rendered) != expected {
+		t.Errorf("rendered mismatch:\ngot  %q\nwant %q", rendered, expected)
+	}
+}
+
 func TestRenderResolvedPreservesCRLF(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "crlf.input"))
 	if err != nil {

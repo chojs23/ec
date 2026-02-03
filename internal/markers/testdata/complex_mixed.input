@@ -1,0 +1,27 @@
+intro line
+<<<<<<< HEAD
+ours line 1
+ours line 2
+||||||| base:main
+base line 1
+base line 2
+=======
+theirs line 1
+theirs line 2
+>>>>>>> feature/topic
+middle line
+<<<<<<< HEAD
+ours only
+=======
+theirs only
+>>>>>>> feature2
+tail line
+<<<<<<< HEAD
+ours without theirs
+=======
+>>>>>>> feature3
+end line
+<<<<<<< HEAD
+=======
+theirs without ours
+>>>>>>> feature4

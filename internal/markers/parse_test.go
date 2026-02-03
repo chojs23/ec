@@ -105,6 +105,46 @@ func TestParseMultiple(t *testing.T) {
 	}
 }
 
+func TestParseComplexMixed(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "complex_mixed.input"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	if len(doc.Conflicts) != 4 {
+		t.Fatalf("expected 4 conflicts, got %d", len(doc.Conflicts))
+	}
+
+	conflict0 := doc.Segments[doc.Conflicts[0].SegmentIndex].(ConflictSegment)
+	if conflict0.OursLabel != "HEAD" {
+		t.Errorf("conflict0 ours label = %q", conflict0.OursLabel)
+	}
+	if conflict0.BaseLabel != "base:main" {
+		t.Errorf("conflict0 base label = %q", conflict0.BaseLabel)
+	}
+	if conflict0.TheirsLabel != "feature/topic" {
+		t.Errorf("conflict0 theirs label = %q", conflict0.TheirsLabel)
+	}
+	if len(conflict0.Base) == 0 {
+		t.Fatalf("conflict0 base should be present")
+	}
+
+	conflict2 := doc.Segments[doc.Conflicts[2].SegmentIndex].(ConflictSegment)
+	if len(conflict2.Theirs) != 0 {
+		t.Errorf("conflict2 theirs should be empty, got %q", conflict2.Theirs)
+	}
+
+	conflict3 := doc.Segments[doc.Conflicts[3].SegmentIndex].(ConflictSegment)
+	if len(conflict3.Ours) != 0 {
+		t.Errorf("conflict3 ours should be empty, got %q", conflict3.Ours)
+	}
+}
+
 func TestParseFalsePositive(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "false_positive.input"))
 	if err != nil {
