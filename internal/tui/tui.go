@@ -843,15 +843,14 @@ func ensureVisible(viewportModel *viewport.Model, start int, total int) {
 		maxOffset = 0
 	}
 
-	margin := 2
-	target := start - margin
-	if target < 0 {
-		target = 0
+	centerOffset := start - (viewportModel.Height / 2)
+	if centerOffset < 0 {
+		centerOffset = 0
 	}
-	if target > maxOffset {
-		target = maxOffset
+	if centerOffset > maxOffset {
+		centerOffset = maxOffset
 	}
-	viewportModel.YOffset = target
+	viewportModel.YOffset = centerOffset
 }
 
 func (m *model) scrollHorizontal(delta int) {
