@@ -93,26 +93,42 @@ ec --apply-all ours --base <path> --local <path> --remote <path> --merged <path>
 
 Keybindings are vim-like by default.
 
-Navigation
+## Resolver screen
 
-1. n and p: next and previous conflict
-2. j and k: vertical scroll
-3. H and L: horizontal scroll
+The resolver shows three panes in one view.
 
-Selection and apply
+Conflicts are shown as focused blocks. The center pane is the output that will be written to the merged file.
 
-1. h and l: select ours or theirs
-2. a: accept selection
-3. d: discard selection
-4. o, t, b, x: apply ours, theirs, both, or none
-5. O and T: apply ours or theirs to all
+You can move between conflicts, choose a side, and apply it. The status line shows which conflict you are on and whether it is resolved.
 
-Other
+Use e to open $EDITOR with the current result. When you exit the editor, the resolver reloads the merged file and keeps manual edits.
 
-1. u: undo
-2. e: open $EDITOR with current result
-3. w: write merged file without quitting
-4. q: back to selector or quit
+Blue: modified lines (changed vs base)
+
+Green: added lines
+
+Red: conflicted lines where both sides differ
+
+### Navigation
+
+- n / p: next and previous conflict
+- j / k: vertical scroll
+- H / L: horizontal scroll
+
+#### Selection and apply
+
+- h / l: select ours or theirs
+- a: accept selection
+- d: discard selection
+- o, t, b, x: apply ours, theirs, both, or none
+- O and T: apply ours or theirs to all
+
+#### Other
+
+- u: undo
+- e: open $EDITOR with current result
+- w: write merged file without quitting
+- q: back to selector or quit
 
 ## Backup behavior
 
