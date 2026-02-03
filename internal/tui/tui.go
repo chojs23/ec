@@ -149,6 +149,11 @@ type model struct {
 	opts            cli.Options
 	state           *engine.State
 	doc             markers.Document
+	baseLines       []string
+	oursLines       []string
+	theirsLines     []string
+	conflictRanges  []conflictRange
+	useFullDiff     bool
 	currentConflict int
 	selectedSide    selectionSide
 	manualResolved  map[int][]byte
@@ -208,11 +213,18 @@ func Run(ctx context.Context, opts cli.Options) error {
 		return fmt.Errorf("failed to create state: %w", err)
 	}
 
+	baseLines, oursLines, theirsLines, ranges, useFullDiff := prepareFullDiff(doc, opts)
+
 	m := model{
 		ctx:             ctx,
 		opts:            opts,
 		state:           state,
 		doc:             doc,
+		baseLines:       baseLines,
+		oursLines:       oursLines,
+		theirsLines:     theirsLines,
+		conflictRanges:  ranges,
+		useFullDiff:     useFullDiff,
 		currentConflict: 0,
 		selectedSide:    selectedOurs,
 		manualResolved:  manualResolved,
@@ -360,6 +372,43 @@ func (m *model) reloadFromFile() error {
 	m.updateViewports()
 
 	return nil
+}
+
+func prepareFullDiff(doc markers.Document, opts cli.Options) ([]string, []string, []string, []conflictRange, bool) {
+	if opts.AllowMissingBase {
+		return nil, nil, nil, nil, false
+	}
+	if opts.BasePath == "" || opts.LocalPath == "" || opts.RemotePath == "" {
+		return nil, nil, nil, nil, false
+	}
+
+	baseLines, err := loadLines(opts.BasePath)
+	if err != nil {
+		return nil, nil, nil, nil, false
+	}
+	oursLines, err := loadLines(opts.LocalPath)
+	if err != nil {
+		return nil, nil, nil, nil, false
+	}
+	theirsLines, err := loadLines(opts.RemotePath)
+	if err != nil {
+		return nil, nil, nil, nil, false
+	}
+
+	ranges, ok := computeConflictRanges(doc, baseLines, oursLines, theirsLines)
+	if !ok {
+		return nil, nil, nil, nil, false
+	}
+
+	return baseLines, oursLines, theirsLines, ranges, true
+}
+
+func loadLines(path string) ([]string, error) {
+	bytes, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	return splitLines(bytes), nil
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -728,7 +777,25 @@ func (m *model) updateViewports() {
 	}
 
 	// Update ours pane (full file, highlight conflicts)
-	oursLines, oursStart := buildPaneLines(m.doc, paneOurs, m.currentConflict, m.selectedSide)
+	var oursLines []lineInfo
+	var oursStart int
+	var theirsLines []lineInfo
+	var theirsStart int
+	useFullDiff := m.useFullDiff
+	if useFullDiff && len(m.conflictRanges) != len(m.doc.Conflicts) {
+		useFullDiff = false
+	}
+
+	if useFullDiff {
+		oursEntries := diffEntries(m.baseLines, m.oursLines)
+		theirsEntries := diffEntries(m.baseLines, m.theirsLines)
+		markConflictedInRanges(&oursEntries, &theirsEntries, m.conflictRanges)
+		oursLines, oursStart = buildPaneLinesFromEntries(m.doc, paneOurs, m.currentConflict, m.selectedSide, oursEntries, m.conflictRanges)
+		theirsLines, theirsStart = buildPaneLinesFromEntries(m.doc, paneTheirs, m.currentConflict, m.selectedSide, theirsEntries, m.conflictRanges)
+	} else {
+		oursLines, oursStart = buildPaneLinesFromDoc(m.doc, paneOurs, m.currentConflict, m.selectedSide)
+		theirsLines, theirsStart = buildPaneLinesFromDoc(m.doc, paneTheirs, m.currentConflict, m.selectedSide)
+	}
 	oursContent := renderLines(oursLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles)
 	m.viewportOurs.SetContent(oursContent)
 	if m.pendingScroll {
@@ -736,7 +803,6 @@ func (m *model) updateViewports() {
 	}
 
 	// Update theirs pane (full file, highlight conflicts)
-	theirsLines, theirsStart := buildPaneLines(m.doc, paneTheirs, m.currentConflict, m.selectedSide)
 	theirsContent := renderLines(theirsLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles)
 	m.viewportTheirs.SetContent(theirsContent)
 	if m.pendingScroll {
@@ -744,7 +810,15 @@ func (m *model) updateViewports() {
 	}
 
 	// Update result pane with full resolved preview
-	resultLines, resultStart := buildResultLines(m.doc, m.currentConflict, m.selectedSide, m.manualResolved)
+	var resultLines []lineInfo
+	var resultStart int
+	if useFullDiff {
+		previewLines, forced, resultRanges := buildResultPreviewLines(m.doc, m.selectedSide, m.manualResolved)
+		resultEntries := diffEntries(m.baseLines, previewLines)
+		resultLines, resultStart = buildResultLinesFromEntries(resultEntries, resultRanges, m.currentConflict, forced)
+	} else {
+		resultLines, resultStart = buildResultLines(m.doc, m.currentConflict, m.selectedSide, m.manualResolved)
+	}
 	resultContent := renderLines(resultLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles)
 	m.viewportResult.SetContent(resultContent)
 	if m.pendingScroll {
