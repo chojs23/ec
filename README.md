@@ -53,14 +53,14 @@ Add this to your git config
 [merge]
     tool = ec
 
-[mergetool "easy-conflict"]
+[mergetool "ec"]
     cmd = ec "$BASE" "$LOCAL" "$REMOTE" "$MERGED"
     trustExitCode = true
 ```
 
 Notes
 
-1. easy-conflict does not run git add after you write
+1. ec does not run git add after you write
 2. Git will still decide whether the merge is resolved based on the file contents
 
 ## Usage
@@ -112,7 +112,7 @@ Other
 
 ## Backup behavior
 
-Backups are off by default. Use --backup to write a sibling file named <merged>.easy-conflict.bak before writing the result.
+Backups are off by default. Use --backup to write a sibling file named <merged>.ec.bak before writing the result.
 
 ## Base view behavior
 
