@@ -81,10 +81,6 @@ var ErrSelectorQuit = fmt.Errorf("selector quit")
 
 // SelectFile opens a TUI selector and returns the chosen repo-relative path.
 func SelectFile(ctx context.Context, candidates []FileCandidate) (string, error) {
-	if len(candidates) == 1 {
-		return candidates[0].Path, nil
-	}
-
 	items := make([]list.Item, 0, len(candidates))
 	for _, candidate := range candidates {
 		items = append(items, fileItem{path: candidate.Path, resolved: candidate.Resolved})

@@ -120,9 +120,6 @@ func selectPath(paths []string) (string, error) {
 }
 
 func selectPathInteractive(ctx context.Context, repoRoot string, paths []string) (string, error) {
-	if len(paths) == 1 {
-		return paths[0], nil
-	}
 	if isInteractiveTTY() {
 		candidates, err := buildFileCandidates(repoRoot, paths)
 		if err != nil {
