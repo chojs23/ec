@@ -20,7 +20,8 @@ import (
 )
 
 const (
-	maxUndoSize = 100
+	maxUndoSize           = 100
+	keySeqTimeoutDuration = 350 * time.Millisecond
 )
 
 var (
@@ -158,6 +159,8 @@ type model struct {
 	selectedSide    selectionSide
 	manualResolved  map[int][]byte
 	pendingScroll   bool
+	keySeq          string
+	keySeqTimeout   int
 	viewportOurs    viewport.Model
 	viewportResult  viewport.Model
 	viewportTheirs  viewport.Model
@@ -254,6 +257,10 @@ type editorFinishedMsg struct {
 }
 
 type toastExpiredMsg struct {
+	id int
+}
+
+type keySeqExpiredMsg struct {
 	id int
 }
 
@@ -437,8 +444,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case keySeqExpiredMsg:
+		if msg.id == m.keySeqTimeout {
+			m.keySeq = ""
+		}
+		return m, nil
+
 	case tea.KeyMsg:
-		switch msg.String() {
+		key := msg.String()
+		if key == "g" {
+			if m.keySeq == "g" {
+				m.keySeq = ""
+				m.scrollToTop()
+				return m, nil
+			}
+			m.keySeq = "g"
+			m.keySeqTimeout++
+			id := m.keySeqTimeout
+			return m, tea.Tick(keySeqTimeoutDuration, func(time.Time) tea.Msg {
+				return keySeqExpiredMsg{id: id}
+			})
+		}
+		if key == "G" {
+			m.keySeq = ""
+			m.scrollToBottom()
+			return m, nil
+		}
+		if m.keySeq != "" {
+			m.keySeq = ""
+		}
+		switch key {
 		case "q":
 			m.err = ErrBackToSelector
 			m.quitting = true
@@ -851,6 +886,18 @@ func ensureVisible(viewportModel *viewport.Model, start int, total int) {
 		centerOffset = maxOffset
 	}
 	viewportModel.YOffset = centerOffset
+}
+
+func (m *model) scrollToTop() {
+	m.viewportOurs.GotoTop()
+	m.viewportResult.GotoTop()
+	m.viewportTheirs.GotoTop()
+}
+
+func (m *model) scrollToBottom() {
+	m.viewportOurs.GotoBottom()
+	m.viewportResult.GotoBottom()
+	m.viewportTheirs.GotoBottom()
 }
 
 func (m *model) scrollHorizontal(delta int) {

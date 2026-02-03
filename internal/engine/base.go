@@ -12,8 +12,6 @@ import (
 type BaseDisplayStrategy string
 
 const (
-	// BaseDisplayExact means every conflict must have an exact base chunk
-	// from diff3 output. This is the only supported strategy in MVP.
 	BaseDisplayExact BaseDisplayStrategy = "exact"
 )
 
