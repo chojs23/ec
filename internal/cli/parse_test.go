@@ -1,6 +1,9 @@
 package cli
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestParseBackupDefault(t *testing.T) {
 	opts, err := Parse([]string{})
@@ -20,5 +23,12 @@ func TestParseBackupFlag(t *testing.T) {
 	}
 	if !opts.Backup {
 		t.Fatalf("Parse() Backup = false, want true")
+	}
+}
+
+func TestParseVersionFlag(t *testing.T) {
+	_, err := Parse([]string{"--version"})
+	if !errors.Is(err, ErrVersion) {
+		t.Fatalf("Parse() error = %v, want ErrVersion", err)
 	}
 }

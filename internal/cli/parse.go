@@ -9,11 +9,13 @@ import (
 )
 
 var ErrHelp = errors.New("help requested")
+var ErrVersion = errors.New("version requested")
 
 func Parse(args []string) (Options, error) {
 	var opts Options
 	var help bool
 	var backup bool
+	var showVersion bool
 
 	opts.Backup = false
 
@@ -30,6 +32,7 @@ func Parse(args []string) (Options, error) {
 	fs.BoolVar(&opts.Verbose, "v", false, "Verbose logging to stderr")
 	fs.BoolVar(&help, "help", false, "Show help")
 	fs.BoolVar(&help, "h", false, "Show help")
+	fs.BoolVar(&showVersion, "version", false, "Show version")
 
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
@@ -37,6 +40,9 @@ func Parse(args []string) (Options, error) {
 	}
 	if help {
 		return Options{}, ErrHelp
+	}
+	if showVersion {
+		return Options{}, ErrVersion
 	}
 
 	if backup {
@@ -102,6 +108,7 @@ No-args mode:
 
 Options:
 	  --backup                    Create $MERGED.ec.bak
+	  --version                   Show version
 	  -v                          Verbose logging
 `)
 }
