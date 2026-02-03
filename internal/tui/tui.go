@@ -13,10 +13,10 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/chojs23/easy-conflict/internal/cli"
-	"github.com/chojs23/easy-conflict/internal/engine"
-	"github.com/chojs23/easy-conflict/internal/gitmerge"
-	"github.com/chojs23/easy-conflict/internal/markers"
+	"github.com/chojs23/ec/internal/cli"
+	"github.com/chojs23/ec/internal/engine"
+	"github.com/chojs23/ec/internal/gitmerge"
+	"github.com/chojs23/ec/internal/markers"
 )
 
 const (
@@ -304,7 +304,7 @@ func (m *model) openEditor() tea.Cmd {
 	}
 
 	if m.opts.Backup {
-		bak := m.opts.MergedPath + ".easy-conflict.bak"
+		bak := m.opts.MergedPath + ".ec.bak"
 		if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
 			return func() tea.Msg {
 				return editorFinishedMsg{err: fmt.Errorf("write backup %s: %w", filepath.Base(bak), err)}
@@ -928,7 +928,7 @@ func (m *model) writeResolved() error {
 
 	// Write backup if enabled
 	if m.opts.Backup {
-		bak := m.opts.MergedPath + ".easy-conflict.bak"
+		bak := m.opts.MergedPath + ".ec.bak"
 		if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
 			return fmt.Errorf("write backup %s: %w", filepath.Base(bak), err)
 		}

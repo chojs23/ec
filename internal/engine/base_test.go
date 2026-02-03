@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chojs23/easy-conflict/internal/gitmerge"
-	"github.com/chojs23/easy-conflict/internal/markers"
+	"github.com/chojs23/ec/internal/gitmerge"
+	"github.com/chojs23/ec/internal/markers"
 )
 
 // TestValidateBaseCompleteness_AllConflictsHaveBase tests that validation passes

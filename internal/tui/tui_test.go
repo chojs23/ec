@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/chojs23/easy-conflict/internal/cli"
-	"github.com/chojs23/easy-conflict/internal/engine"
-	"github.com/chojs23/easy-conflict/internal/gitmerge"
-	"github.com/chojs23/easy-conflict/internal/markers"
+	"github.com/chojs23/ec/internal/cli"
+	"github.com/chojs23/ec/internal/engine"
+	"github.com/chojs23/ec/internal/gitmerge"
+	"github.com/chojs23/ec/internal/markers"
 )
 
 func TestModelQuitBackToSelector(t *testing.T) {
@@ -29,7 +29,7 @@ func TestModelQuitBackToSelector(t *testing.T) {
 }
 
 func TestModelWriteDoesNotQuit(t *testing.T) {
-	file, err := os.CreateTemp("", "easy-conflict-merged-*")
+	file, err := os.CreateTemp("", "ec-merged-*")
 	if err != nil {
 		t.Fatalf("CreateTemp error = %v", err)
 	}

@@ -10,10 +10,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/chojs23/easy-conflict/internal/cli"
-	"github.com/chojs23/easy-conflict/internal/engine"
-	"github.com/chojs23/easy-conflict/internal/gitutil"
-	"github.com/chojs23/easy-conflict/internal/tui"
+	"github.com/chojs23/ec/internal/cli"
+	"github.com/chojs23/ec/internal/engine"
+	"github.com/chojs23/ec/internal/gitutil"
+	"github.com/chojs23/ec/internal/tui"
 )
 
 var errNoConflicts = errors.New("no conflicted files found")
@@ -159,7 +159,7 @@ func buildFileCandidates(repoRoot string, paths []string) ([]tui.FileCandidate, 
 }
 
 func writeTempStages(base, local, remote []byte) (string, string, string, func(), error) {
-	baseFile, err := os.CreateTemp("", "easy-conflict-base-*")
+	baseFile, err := os.CreateTemp("", "ec-base-*")
 	if err != nil {
 		return "", "", "", nil, fmt.Errorf("create base temp file: %w", err)
 	}
@@ -174,7 +174,7 @@ func writeTempStages(base, local, remote []byte) (string, string, string, func()
 		return "", "", "", nil, fmt.Errorf("close base temp file: %w", err)
 	}
 
-	localFile, err := os.CreateTemp("", "easy-conflict-local-*")
+	localFile, err := os.CreateTemp("", "ec-local-*")
 	if err != nil {
 		os.Remove(basePath)
 		return "", "", "", nil, fmt.Errorf("create local temp file: %w", err)
@@ -192,7 +192,7 @@ func writeTempStages(base, local, remote []byte) (string, string, string, func()
 		return "", "", "", nil, fmt.Errorf("close local temp file: %w", err)
 	}
 
-	remoteFile, err := os.CreateTemp("", "easy-conflict-remote-*")
+	remoteFile, err := os.CreateTemp("", "ec-remote-*")
 	if err != nil {
 		os.Remove(basePath)
 		os.Remove(localPath)

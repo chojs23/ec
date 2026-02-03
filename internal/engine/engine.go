@@ -8,9 +8,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/chojs23/easy-conflict/internal/cli"
-	"github.com/chojs23/easy-conflict/internal/gitmerge"
-	"github.com/chojs23/easy-conflict/internal/markers"
+	"github.com/chojs23/ec/internal/cli"
+	"github.com/chojs23/ec/internal/gitmerge"
+	"github.com/chojs23/ec/internal/markers"
 )
 
 func CheckResolvedFile(mergedPath string) (bool, error) {
@@ -82,7 +82,7 @@ func ApplyAllAndWrite(ctx context.Context, opts cli.Options) error {
 	}
 
 	if opts.Backup {
-		bak := opts.MergedPath + ".easy-conflict.bak"
+		bak := opts.MergedPath + ".ec.bak"
 		if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
 			return fmt.Errorf("write backup %s: %w", filepath.Base(bak), err)
 		}

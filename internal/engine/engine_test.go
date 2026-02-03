@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chojs23/easy-conflict/internal/cli"
-	"github.com/chojs23/easy-conflict/internal/gitmerge"
+	"github.com/chojs23/ec/internal/cli"
+	"github.com/chojs23/ec/internal/gitmerge"
 )
 
 func TestApplyAllAndWrite_WritesResolvedAndBackup(t *testing.T) {
@@ -73,7 +73,7 @@ func TestApplyAllAndWrite_WritesResolvedAndBackup(t *testing.T) {
 		t.Errorf("resolved output mismatch:\nexpected: %q\ngot: %q", expected, string(resolved))
 	}
 
-	bakPath := mergedPath + ".easy-conflict.bak"
+	bakPath := mergedPath + ".ec.bak"
 	bak, err := os.ReadFile(bakPath)
 	if err != nil {
 		t.Fatalf("backup not found: %v", err)
@@ -110,7 +110,7 @@ func TestApplyAllAndWrite_NoConflictsNoWrite(t *testing.T) {
 		t.Fatalf("merged content changed unexpectedly: %q", string(data))
 	}
 
-	if _, err := os.Stat(mergedPath + ".easy-conflict.bak"); err == nil {
+	if _, err := os.Stat(mergedPath + ".ec.bak"); err == nil {
 		t.Fatalf("expected no backup file when no conflicts")
 	}
 }

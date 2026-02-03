@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/chojs23/easy-conflict/internal/markers"
+	"github.com/chojs23/ec/internal/markers"
 )
 
 func TestNewState(t *testing.T) {

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chojs23/easy-conflict/internal/cli"
-	"github.com/chojs23/easy-conflict/internal/run"
+	"github.com/chojs23/ec/internal/cli"
+	"github.com/chojs23/ec/internal/run"
 )
 
 func main() {

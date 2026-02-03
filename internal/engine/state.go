@@ -3,7 +3,7 @@ package engine
 import (
 	"fmt"
 
-	"github.com/chojs23/easy-conflict/internal/markers"
+	"github.com/chojs23/ec/internal/markers"
 )
 
 // State manages resolution state for a conflict document with undo support.

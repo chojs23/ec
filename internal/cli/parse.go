@@ -17,7 +17,7 @@ func Parse(args []string) (Options, error) {
 
 	opts.Backup = false
 
-	fs := flag.NewFlagSet("easy-conflict", flag.ContinueOnError)
+	fs := flag.NewFlagSet("ec", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
 	fs.StringVar(&opts.BasePath, "base", "", "Path to BASE (ancestor) file")
@@ -26,7 +26,7 @@ func Parse(args []string) (Options, error) {
 	fs.StringVar(&opts.MergedPath, "merged", "", "Path to MERGED file (output target)")
 	fs.StringVar(&opts.ApplyAll, "apply-all", "", "Non-interactive resolution: ours|theirs|both")
 	fs.BoolVar(&opts.Check, "check", false, "Exit 0 if resolved (no conflict markers), else 1")
-	fs.BoolVar(&backup, "backup", false, "Create $MERGED.easy-conflict.bak on write")
+	fs.BoolVar(&backup, "backup", false, "Create $MERGED.ec.bak on write")
 	fs.BoolVar(&opts.Verbose, "v", false, "Verbose logging to stderr")
 	fs.BoolVar(&help, "help", false, "Show help")
 	fs.BoolVar(&help, "h", false, "Show help")
@@ -88,20 +88,20 @@ func Parse(args []string) (Options, error) {
 
 func Usage() string {
 	return strings.TrimSpace(`Usage:
-	  easy-conflict
-	  easy-conflict <BASE> <LOCAL> <REMOTE> <MERGED>
-	  easy-conflict --base <path> --local <path> --remote <path> --merged <path>
+	  ec
+	  ec <BASE> <LOCAL> <REMOTE> <MERGED>
+	  ec --base <path> --local <path> --remote <path> --merged <path>
 
 Modes:
 	  --check                     Exit 0 if $MERGED has no valid conflict blocks, else 1
 	  --apply-all ours|theirs|both|none Resolve all conflicts non-interactively and write $MERGED
 
 No-args mode:
-	  If invoked with no paths and no mode flags, easy-conflict lists
+	  If invoked with no paths and no mode flags, ec lists
 	  conflicted files under the current directory and prompts to select one.
 
 Options:
-	  --backup                    Create $MERGED.easy-conflict.bak
+	  --backup                    Create $MERGED.ec.bak
 	  -v                          Verbose logging
 `)
 }

@@ -15,7 +15,7 @@ easy-conflict is a terminal native Git mergetool with a 3 pane IntelliJ like res
 Option 1. Go install
 
 ```
-go install github.com/chojs23/easy-conflict/cmd/easy-conflict@latest
+go install github.com/chojs23/ec/cmd/ec@latest
 ```
 
 Option 2. Install script
@@ -36,13 +36,13 @@ make build
 1. Run with no args inside a git repo that has conflicts
 
 ```
-easy-conflict
+ec
 ```
 
 2. Use it as a mergetool
 
 ```
-git mergetool --tool easy-conflict
+git mergetool --tool ec
 ```
 
 ## Git mergetool configuration
@@ -51,10 +51,10 @@ Add this to your git config
 
 ```
 [merge]
-    tool = easy-conflict
+    tool = ec
 
 [mergetool "easy-conflict"]
-    cmd = easy-conflict "$BASE" "$LOCAL" "$REMOTE" "$MERGED"
+    cmd = ec "$BASE" "$LOCAL" "$REMOTE" "$MERGED"
     trustExitCode = true
 ```
 
@@ -68,21 +68,21 @@ Notes
 Interactive
 
 ```
-easy-conflict <BASE> <LOCAL> <REMOTE> <MERGED>
-easy-conflict --base <path> --local <path> --remote <path> --merged <path>
+ec <BASE> <LOCAL> <REMOTE> <MERGED>
+ec --base <path> --local <path> --remote <path> --merged <path>
 ```
 
 No args mode
 
 ```
-easy-conflict
+ec
 ```
 
 Non interactive
 
 ```
-easy-conflict --check --merged <path>
-easy-conflict --apply-all ours --base <path> --local <path> --remote <path> --merged <path>
+ec --check --merged <path>
+ec --apply-all ours --base <path> --local <path> --remote <path> --merged <path>
 ```
 
 ## Key bindings

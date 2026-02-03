@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/chojs23/easy-conflict/internal/markers"
+	"github.com/chojs23/ec/internal/markers"
 )
 
 // BaseDisplayStrategy defines how base chunks are provided for conflicts.

@@ -45,16 +45,20 @@ jobs:
           mkdir -p dist
           
           # Build for Linux amd64
-          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/easy-conflict-linux-amd64 ./cmd/easy-conflict
+          GOOS=linux GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/ec-linux-amd64 ./cmd/ec
+          cp dist/ec-linux-amd64 dist/easy-conflict-linux-amd64
           
           # Build for Linux arm64
-          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o dist/easy-conflict-linux-arm64 ./cmd/easy-conflict
+          GOOS=linux GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o dist/ec-linux-arm64 ./cmd/ec
+          cp dist/ec-linux-arm64 dist/easy-conflict-linux-arm64
           
           # Build for macOS amd64
-          GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/easy-conflict-darwin-amd64 ./cmd/easy-conflict
+          GOOS=darwin GOARCH=amd64 go build -trimpath -ldflags "-s -w" -o dist/ec-darwin-amd64 ./cmd/ec
+          cp dist/ec-darwin-amd64 dist/easy-conflict-darwin-amd64
           
           # Build for macOS arm64 (Apple Silicon)
-          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o dist/easy-conflict-darwin-arm64 ./cmd/easy-conflict
+          GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w" -o dist/ec-darwin-arm64 ./cmd/ec
+          cp dist/ec-darwin-arm64 dist/easy-conflict-darwin-arm64
 
       - name: Generate checksums
         run: |
@@ -66,6 +70,10 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
+            dist/ec-linux-amd64
+            dist/ec-linux-arm64
+            dist/ec-darwin-amd64
+            dist/ec-darwin-arm64
             dist/easy-conflict-linux-amd64
             dist/easy-conflict-linux-arm64
             dist/easy-conflict-darwin-amd64

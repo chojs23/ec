@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/chojs23/easy-conflict/internal/cli"
-	"github.com/chojs23/easy-conflict/internal/engine"
-	"github.com/chojs23/easy-conflict/internal/tui"
+	"github.com/chojs23/ec/internal/cli"
+	"github.com/chojs23/ec/internal/engine"
+	"github.com/chojs23/ec/internal/tui"
 )
 
 func Run(ctx context.Context, opts cli.Options) int {

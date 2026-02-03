@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/chojs23/easy-conflict/internal/cli"
-	"github.com/chojs23/easy-conflict/internal/gitmerge"
+	"github.com/chojs23/ec/internal/cli"
+	"github.com/chojs23/ec/internal/gitmerge"
 )
 
 func TestRunCheckResolvedExitCodes(t *testing.T) {

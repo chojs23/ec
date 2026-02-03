@@ -1,12 +1,14 @@
 SHELL := /bin/sh
 
-APP := easy-conflict
+APP := ec
+ALIAS := easy-conflict
 GOFILES := $(shell if command -v fd >/dev/null 2>&1; then fd -e go .; else find . -name '*.go'; fi)
 
 .PHONY: build test fmt fmt-check install clean
 
 build:
-	go build -o $(APP) ./cmd/easy-conflict
+	go build -o $(APP) ./cmd/ec
+	ln -sf $(APP) $(ALIAS)
 
 test:
 	go test ./...
@@ -21,4 +23,4 @@ install:
 	./scripts/install.sh
 
 clean:
-	rm -f $(APP)
+	rm -f $(APP) $(ALIAS)

@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	"github.com/chojs23/easy-conflict/internal/markers"
+	"github.com/chojs23/ec/internal/markers"
 )
 
 func TestConnectorForResult(t *testing.T) {

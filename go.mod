@@ -1,4 +1,4 @@
-module github.com/chojs23/easy-conflict
+module github.com/chojs23/ec
 
 go 1.24.5
 
