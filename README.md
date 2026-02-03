@@ -1,5 +1,9 @@
 # ec (easy-conflict)
 
+<img width="1613" height="848" alt="Image" src="https://github.com/user-attachments/assets/f6903327-15c6-4fc0-9427-5bd820ba02ec" />
+
+![Demo](https://github.com/user-attachments/assets/15022303-9948-4fdd-a6e5-2f909213d6a9)
+
 easy-conflict is a terminal native Git mergetool with a 3 pane IntelliJ like resolver. It focuses on conflict blocks and writes the resolved result back to the merged file.
 
 ## Features
