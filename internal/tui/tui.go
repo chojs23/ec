@@ -274,48 +274,63 @@ func (m *model) showToast(message string, duration time.Duration) tea.Cmd {
 }
 
 func (m *model) openEditor() tea.Cmd {
-	return func() tea.Msg {
-		editor := os.Getenv("EDITOR")
-		if editor == "" {
-			editor = "vi"
-		}
+	editor := os.Getenv("EDITOR")
+	if editor == "" {
+		editor = "vi"
+	}
 
-		if editor == "true" {
+	if editor == "true" {
+		return func() tea.Msg {
 			return editorFinishedMsg{err: nil}
 		}
+	}
 
-		resolved, err := m.state.Preview()
-		if err != nil {
-			return editorFinishedMsg{err: fmt.Errorf("cannot generate preview for editor: %w", err)}
-		}
-
-		mergedBytes, err := os.ReadFile(m.opts.MergedPath)
-		if err != nil {
+	mergedBytes, err := os.ReadFile(m.opts.MergedPath)
+	if err != nil {
+		return func() tea.Msg {
 			return editorFinishedMsg{err: fmt.Errorf("read merged for backup: %w", err)}
 		}
+	}
 
-		if m.opts.Backup {
-			bak := m.opts.MergedPath + ".easy-conflict.bak"
-			if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
+	resolved, err := m.state.Preview()
+	if err != nil {
+		if errors.Is(err, markers.ErrUnresolved) {
+			resolved = mergedBytes
+		} else {
+			return func() tea.Msg {
+				return editorFinishedMsg{err: fmt.Errorf("cannot generate preview for editor: %w", err)}
+			}
+		}
+	}
+
+	if m.opts.Backup {
+		bak := m.opts.MergedPath + ".easy-conflict.bak"
+		if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
+			return func() tea.Msg {
 				return editorFinishedMsg{err: fmt.Errorf("write backup %s: %w", filepath.Base(bak), err)}
 			}
 		}
+	}
 
+	if !bytes.Equal(resolved, mergedBytes) {
 		if err := os.WriteFile(m.opts.MergedPath, resolved, 0o644); err != nil {
-			return editorFinishedMsg{err: fmt.Errorf("write merged before editor: %w", err)}
+			return func() tea.Msg {
+				return editorFinishedMsg{err: fmt.Errorf("write merged before editor: %w", err)}
+			}
 		}
+	}
 
-		cmd := exec.Command(editor, m.opts.MergedPath)
-		cmd.Stdin = os.Stdin
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
+	cmd := exec.Command(editor, m.opts.MergedPath)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 
-		if err := cmd.Run(); err != nil {
+	return tea.ExecProcess(cmd, func(err error) tea.Msg {
+		if err != nil {
 			return editorFinishedMsg{err: fmt.Errorf("editor failed: %w", err)}
 		}
-
 		return editorFinishedMsg{err: nil}
-	}
+	})
 }
 
 func (m *model) reloadFromFile() error {
@@ -338,36 +353,19 @@ func (m *model) reloadFromFile() error {
 		return fmt.Errorf("base validation failed: %w", err)
 	}
 
-	state, err := engine.NewState(doc, maxUndoSize)
+	updated, manual, err := applyMergedResolutions(doc, editedBytes)
+	if err != nil {
+		return fmt.Errorf("apply merged resolutions: %w", err)
+	}
+
+	state, err := engine.NewState(updated, maxUndoSize)
 	if err != nil {
 		return fmt.Errorf("create new state: %w", err)
 	}
 
-	editedDoc, err := markers.Parse(editedBytes)
-	if err != nil {
-		return fmt.Errorf("parse edited file: %w", err)
-	}
-
-	for i := range doc.Conflicts {
-		if i >= len(editedDoc.Conflicts) {
-			continue
-		}
-
-		editedRef := editedDoc.Conflicts[i]
-		editedSeg, ok := editedDoc.Segments[editedRef.SegmentIndex].(markers.ConflictSegment)
-		if !ok {
-			continue
-		}
-
-		if editedSeg.Resolution != markers.ResolutionUnset {
-			if err := state.ApplyResolution(i, editedSeg.Resolution); err != nil {
-				return fmt.Errorf("apply resolution from edited file: %w", err)
-			}
-		}
-	}
-
 	m.state = state
 	m.doc = state.Document()
+	m.manualResolved = manual
 
 	if m.currentConflict >= len(m.doc.Conflicts) {
 		m.currentConflict = len(m.doc.Conflicts) - 1

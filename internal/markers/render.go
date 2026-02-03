@@ -6,6 +6,8 @@ import (
 	"fmt"
 )
 
+var ErrUnresolved = errors.New("unresolved")
+
 func RenderResolved(doc Document) ([]byte, error) {
 	var out bytes.Buffer
 
@@ -26,7 +28,7 @@ func RenderResolved(doc Document) ([]byte, error) {
 			case ResolutionNone:
 				// Write nothing for this conflict.
 			default:
-				return nil, fmt.Errorf("%w: conflict without resolution", errors.New("unresolved"))
+				return nil, fmt.Errorf("%w: conflict without resolution", ErrUnresolved)
 			}
 		default:
 			return nil, fmt.Errorf("unknown segment type %T", seg)
