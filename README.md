@@ -117,3 +117,7 @@ Backups are off by default. Use --backup to write a sibling file named <merged>.
 ## Base view behavior
 
 Base chunks come from git merge-file --diff3 output. If the base stage is missing for a file, the tool continues without a base view and prints a warning.
+
+## License
+
+MIT
