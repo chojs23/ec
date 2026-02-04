@@ -37,3 +37,49 @@ func RenderResolved(doc Document) ([]byte, error) {
 
 	return out.Bytes(), nil
 }
+
+func RenderWithUnresolved(doc Document) ([]byte, error) {
+	var out bytes.Buffer
+
+	writeMarker := func(prefix []byte, label string) {
+		out.Write(prefix)
+		if label != "" {
+			out.WriteByte(' ')
+			out.WriteString(label)
+		}
+		out.WriteByte('\n')
+	}
+
+	for _, seg := range doc.Segments {
+		switch s := seg.(type) {
+		case TextSegment:
+			out.Write(s.Bytes)
+		case ConflictSegment:
+			switch s.Resolution {
+			case ResolutionOurs:
+				out.Write(s.Ours)
+			case ResolutionTheirs:
+				out.Write(s.Theirs)
+			case ResolutionBoth:
+				out.Write(s.Ours)
+				out.Write(s.Theirs)
+			case ResolutionNone:
+				// Write nothing for this conflict.
+			default:
+				writeMarker(markStart, s.OursLabel)
+				out.Write(s.Ours)
+				if len(s.Base) > 0 || s.BaseLabel != "" {
+					writeMarker(markBase, s.BaseLabel)
+					out.Write(s.Base)
+				}
+				writeMarker(markMid, "")
+				out.Write(s.Theirs)
+				writeMarker(markEnd, s.TheirsLabel)
+			}
+		default:
+			return nil, fmt.Errorf("unknown segment type %T", seg)
+		}
+	}
+
+	return out.Bytes(), nil
+}

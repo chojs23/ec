@@ -211,7 +211,7 @@ Red: conflicted lines where both sides differ
 
 - u: undo
 - e: open $EDITOR with current result
-- w: write merged file without quitting
+- w: write file without quitting
 - q: back to selector or quit
 
 ## Backup behavior

@@ -1,6 +1,7 @@
 package markers
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -124,6 +125,27 @@ func TestRenderResolvedUnresolved(t *testing.T) {
 	_, err = RenderResolved(doc)
 	if err == nil {
 		t.Fatal("expected error for unresolved conflict")
+	}
+}
+
+func TestRenderWithUnresolvedKeepsMarkers(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "2way.input"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	doc, err := Parse(data)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	rendered, err := RenderWithUnresolved(doc)
+	if err != nil {
+		t.Fatalf("RenderWithUnresolved failed: %v", err)
+	}
+
+	if !bytes.Equal(rendered, data) {
+		t.Fatalf("rendered mismatch: output differs from original input")
 	}
 }
 

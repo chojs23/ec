@@ -295,7 +295,12 @@ func (m *model) openEditor() tea.Cmd {
 	resolved, err := m.state.Preview()
 	if err != nil {
 		if errors.Is(err, markers.ErrUnresolved) {
-			resolved = mergedBytes
+			resolved, err = markers.RenderWithUnresolved(m.state.Document())
+			if err != nil {
+				return func() tea.Msg {
+					return editorFinishedMsg{err: fmt.Errorf("render unresolved preview for editor: %w", err)}
+				}
+			}
 		} else {
 			return func() tea.Msg {
 				return editorFinishedMsg{err: fmt.Errorf("cannot generate preview for editor: %w", err)}
@@ -761,7 +766,7 @@ func (m model) View() string {
 	}
 
 	footerText := footerStyle.Width(m.width).Render(
-		fmt.Sprintf("n: next | p: prev | j/k: scroll | H/L: scroll | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | O: ours all | T: theirs all | b: both | x: none | u: undo | e: editor | w: write | q: back to selector%s", undoInfo),
+		fmt.Sprintf("n: next | p: prev | j/k: scroll | H/L: scroll | h: ours | l: theirs | a: accept | d: discard | o: ours | t: theirs | O: ours all | T: theirs all | b: both | x: none | u: undo | e: editor | w: write (allow unresolved) | q: back to selector%s", undoInfo),
 	)
 	footer := lipgloss.JoinVertical(lipgloss.Left, footerText, m.renderToastLine())
 
@@ -916,8 +921,17 @@ func (m *model) scrollHorizontal(delta int) {
 func (m *model) writeResolved() error {
 	// Generate preview
 	resolved, err := m.state.Preview()
+	allowUnresolved := false
 	if err != nil {
-		return fmt.Errorf("cannot write: %w", err)
+		if errors.Is(err, markers.ErrUnresolved) {
+			allowUnresolved = true
+			resolved, err = markers.RenderWithUnresolved(m.state.Document())
+			if err != nil {
+				return fmt.Errorf("render unresolved output: %w", err)
+			}
+		} else {
+			return fmt.Errorf("cannot write: %w", err)
+		}
 	}
 
 	// Read original merged file for backup
@@ -940,12 +954,14 @@ func (m *model) writeResolved() error {
 	}
 
 	// Verify no conflict markers remain
-	postDoc, err := markers.Parse(resolved)
-	if err != nil {
-		return fmt.Errorf("post-parse merged: %w", err)
-	}
-	if len(postDoc.Conflicts) != 0 {
-		return fmt.Errorf("resolution output still contains conflict markers")
+	if !allowUnresolved {
+		postDoc, err := markers.Parse(resolved)
+		if err != nil {
+			return fmt.Errorf("post-parse merged: %w", err)
+		}
+		if len(postDoc.Conflicts) != 0 {
+			return fmt.Errorf("resolution output still contains conflict markers")
+		}
 	}
 
 	return nil
