@@ -35,6 +35,18 @@ Option 3. Build from source
 make build
 ```
 
+Option 4. AUR (build from source)
+
+```
+pikaur -S easy-conflict
+```
+
+Option 5. AUR (binary)
+
+```
+pikaur -S easy-conflict-bin
+```
+
 ## Quick start
 
 1. Run with no args inside a git repo that has conflicts
