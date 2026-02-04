@@ -49,17 +49,95 @@ ec
 git mergetool --tool ec
 ```
 
+## Neovim plugin (terminal buffer)
+
+This repo includes a minimal Neovim plugin that opens ec in a terminal buffer.
+
+Install with your plugin manager and ensure `ec` is on your PATH.
+
+Minimal config:
+
+```lua
+require("ec").setup()
+```
+
+Lazy.nvim minimal config:
+
+```lua
+{
+  "chojs23/ec",
+  keys = {
+    { "<leader>gr", ":Ec<CR>", desc = "Open ec" },
+  },
+}
+```
+
+<details>
+<summary>Default config</summary>
+
+Config defaults:
+
+```lua
+{
+  cmd = "ec",
+  open_cmd = "tabnew",
+  cwd = nil,
+  float = true,
+  close_on_exit = true,
+}
+```
+
+Option notes:
+
+- `cmd`: executable name or list with default args; `:Ec` args are appended.
+- `open_cmd`: Vim command used when float is disabled or unavailable.
+- `cwd`: working directory for ec; string path or function; defaults to `getcwd()`.
+- `float`: enable floating window; table merges with float defaults.
+- `close_on_exit`: close terminal on successful exit code 0.
+
+Float defaults when `float = true`:
+
+```lua
+{
+  width = 0.92,
+  height = 0.86,
+  border = "rounded",
+  title = "ec",
+  title_pos = "center",
+  zindex = 50,
+}
+```
+
+Float option notes:
+
+- `width` and `height`: fractions of editor when <= 1, otherwise absolute size.
+- `border`: floating window border style.
+- `title`: title text for the float.
+- `title_pos`: title alignment.
+- `zindex`: float stacking order.
+
+</details>
+
+Usage:
+
+```
+:Ec
+:Ec --base <path> --local <path> --remote <path> --merged <path>
+```
+
 ## Git mergetool configuration
 
 Add this to your git config
 
 ```
+
 [merge]
-    tool = ec
+  tool = ec
 
 [mergetool "ec"]
-    cmd = ec "$BASE" "$LOCAL" "$REMOTE" "$MERGED"
-    trustExitCode = true
+  cmd = ec "$BASE" "$LOCAL" "$REMOTE" "$MERGED"
+  trustExitCode = true
+
 ```
 
 Notes
@@ -72,21 +150,27 @@ Notes
 Interactive
 
 ```
+
 ec <BASE> <LOCAL> <REMOTE> <MERGED>
 ec --base <path> --local <path> --remote <path> --merged <path>
+
 ```
 
 No args mode
 
 ```
+
 ec
+
 ```
 
 Non interactive
 
 ```
+
 ec --check --merged <path>
 ec --apply-all ours --base <path> --local <path> --remote <path> --merged <path>
+
 ```
 
 ## Key bindings
