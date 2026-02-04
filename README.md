@@ -173,9 +173,6 @@ ec --apply-all ours --base <path> --local <path> --remote <path> --merged <path>
 
 ```
 
-## Key bindings
-
-Keybindings are vim-like by default.
 
 ## Resolver screen
 
@@ -193,13 +190,17 @@ Green: added lines
 
 Red: conflicted lines where both sides differ
 
+## Key bindings
+
+Keybindings are vim-like by default.
+
 ### Navigation
 
 - n / p: next and previous conflict
 - j / k: vertical scroll
 - H / L: horizontal scroll
 
-#### Selection and apply
+### Selection and apply
 
 - h / l: select ours or theirs
 - a: accept selection
@@ -207,7 +208,7 @@ Red: conflicted lines where both sides differ
 - o, t, b, x: apply ours, theirs, both, or none
 - O and T: apply ours or theirs to all
 
-#### Other
+### Other
 
 - u: undo
 - e: open $EDITOR with current result
