@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.1.3
+
+- Add a minimal Neovim plugin for running ec in a terminal buffer
+- Default to a floating window UI in Neovim with optional keymap support
+- Allow writing with unresolved conflicts (markers preserved)
+
 ## v0.1.2
 
 - Initial release of ec
