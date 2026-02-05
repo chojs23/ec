@@ -18,34 +18,45 @@ easy-conflict is a terminal native Git mergetool with a 3 pane IntelliJ like res
 
 ## Install
 
-Option 1. Go install
+### Homebrew
+
+```
+brew install chojs23/ec/ec
+```
+
+### Go install
 
 ```
 go install github.com/chojs23/ec/cmd/ec@latest
 ```
 
-Option 2. Install script
+### Install script
 
 Downloads the GitHub release binary. VERSION is optional and defaults to latest.
 
 ```
 ./scripts/install.sh
+```
+
+```
 VERSION=v0.1.3 PREFIX=/usr/local ./scripts/install.sh
 ```
 
-Option 3. Build from source
+### Build from source
 
 ```
 make build
 ```
 
-Option 4. AUR (build from source)
+### AUR
+
+- build from source
 
 ```
 pikaur -S easy-conflict
 ```
 
-Option 5. AUR (binary)
+- binary
 
 ```
 pikaur -S easy-conflict-bin
@@ -146,14 +157,12 @@ Usage:
 Add this to your git config
 
 ```
-
 [merge]
   tool = ec
 
 [mergetool "ec"]
   cmd = ec "$BASE" "$LOCAL" "$REMOTE" "$MERGED"
   trustExitCode = true
-
 ```
 
 Notes
@@ -166,29 +175,22 @@ Notes
 Interactive
 
 ```
-
 ec <BASE> <LOCAL> <REMOTE> <MERGED>
 ec --base <path> --local <path> --remote <path> --merged <path>
-
 ```
 
 No args mode
 
 ```
-
 ec
-
 ```
 
 Non interactive
 
 ```
-
 ec --check --merged <path>
 ec --apply-all ours --base <path> --local <path> --remote <path> --merged <path>
-
 ```
-
 
 ## Resolver screen
 
