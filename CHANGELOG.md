@@ -1,5 +1,11 @@
 # Changelog
 
+## v0.2.0
+
+- Add theme config support for TUI colors via ~/.config/ec/themes.json
+- Document theme configuration, defaults, and hex color guidance
+- Add tests for theme config loading and apply behavior
+
 ## v0.1.3
 
 - Add a minimal Neovim plugin for running ec in a terminal buffer
