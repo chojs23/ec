@@ -16,7 +16,7 @@ easy-conflict is a terminal native Git mergetool with a 3 pane IntelliJ like res
 4. Non interactive modes for CI or scripts
 5. Optional backup of the merged file
 
-## Install
+## Installation
 
 ### Homebrew
 
@@ -28,6 +28,12 @@ brew install chojs23/ec/ec
 
 ```
 go install github.com/chojs23/ec/cmd/ec@latest
+```
+
+### via curl
+
+```
+curl -fsSL https://raw.githubusercontent.com/chojs23/ec/main/scripts/install.sh | sh
 ```
 
 ### Install script
