@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   sync:
+    if: ${{ !endsWith(github.ref_name, '-test') }}
     runs-on: ubuntu-latest
     env:
       HOMEBREW_EC_TOKEN: ${{ secrets.HOMEBREW_EC_TOKEN }}
