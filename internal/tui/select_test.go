@@ -2,12 +2,34 @@ package tui
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
 )
+
+type stubProgram struct {
+	model tea.Model
+	err   error
+}
+
+func (s stubProgram) Run() (tea.Model, error) {
+	return s.model, s.err
+}
+
+func withSelectProgram(t *testing.T, fn func(model tea.Model, ctx context.Context) programRunner, run func()) {
+	t.Helper()
+	old := selectProgram
+	selectProgram = fn
+	defer func() {
+		selectProgram = old
+	}()
+
+	run()
+}
 
 func TestFileItemMethods(t *testing.T) {
 	item := fileItem{path: "conflict.txt"}
@@ -117,4 +139,36 @@ func TestFileSelectModelView(t *testing.T) {
 	if !strings.Contains(view, "up/down: move") {
 		t.Fatalf("view = %q, want help line", view)
 	}
+}
+
+func TestFileSelectModelInitReturnsNil(t *testing.T) {
+	model := fileSelectModel{}
+	if cmd := model.Init(); cmd != nil {
+		t.Fatalf("Init() = %v, want nil", cmd)
+	}
+}
+
+func TestSelectFileReturnsSelected(t *testing.T) {
+	withSelectProgram(t, func(model tea.Model, ctx context.Context) programRunner {
+		return stubProgram{model: fileSelectModel{selected: "picked.txt"}}
+	}, func() {
+		selected, err := SelectFile(context.Background(), []FileCandidate{{Path: "picked.txt"}})
+		if err != nil {
+			t.Fatalf("SelectFile error = %v", err)
+		}
+		if selected != "picked.txt" {
+			t.Fatalf("SelectFile = %q, want picked.txt", selected)
+		}
+	})
+}
+
+func TestSelectFileReturnsProgramError(t *testing.T) {
+	withSelectProgram(t, func(model tea.Model, ctx context.Context) programRunner {
+		return stubProgram{err: errors.New("boom")}
+	}, func() {
+		_, err := SelectFile(context.Background(), []FileCandidate{{Path: "picked.txt"}})
+		if err == nil {
+			t.Fatalf("SelectFile error = nil, want error")
+		}
+	})
 }

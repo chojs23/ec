@@ -2,9 +2,13 @@ package run
 
 import (
 	"bytes"
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/chojs23/ec/internal/cli"
 )
 
 func withStdin(t *testing.T, input string, fn func()) {
@@ -165,5 +169,136 @@ func TestWriteTempStages(t *testing.T) {
 		t.Fatalf("base temp file still exists")
 	} else if !os.IsNotExist(err) {
 		t.Fatalf("expected not-exist error, got %v", err)
+	}
+}
+
+func TestIsInteractiveTTYFalse(t *testing.T) {
+	withStdout(t, func() {
+		withStdin(t, "", func() {
+			if isInteractiveTTY() {
+				t.Fatalf("isInteractiveTTY returned true")
+			}
+		})
+	})
+}
+
+func TestSelectPathInteractiveNonTTY(t *testing.T) {
+	withStdout(t, func() {
+		withStdin(t, "2\n", func() {
+			selected, err := selectPathInteractive(context.Background(), "repo", []string{"a.txt", "b.txt"})
+			if err != nil {
+				t.Fatalf("selectPathInteractive error: %v", err)
+			}
+			if selected != "b.txt" {
+				t.Fatalf("selectPathInteractive = %q, want b.txt", selected)
+			}
+		})
+	})
+}
+
+func TestPrepareInteractiveFromRepoPopulatesOptions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping git integration test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	repoDir := t.TempDir()
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+	runGit(t, repoDir, "config", "user.name", "Test User")
+
+	conflictPath := filepath.Join(repoDir, "conflict.txt")
+	if err := os.WriteFile(conflictPath, []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	runGit(t, repoDir, "add", "conflict.txt")
+	runGit(t, repoDir, "commit", "-m", "base")
+
+	runGit(t, repoDir, "checkout", "-b", "feature")
+	if err := os.WriteFile(conflictPath, []byte("theirs\n"), 0o644); err != nil {
+		t.Fatalf("write theirs: %v", err)
+	}
+	runGit(t, repoDir, "add", "conflict.txt")
+	runGit(t, repoDir, "commit", "-m", "theirs")
+
+	runGit(t, repoDir, "checkout", "-")
+	if err := os.WriteFile(conflictPath, []byte("ours\n"), 0o644); err != nil {
+		t.Fatalf("write ours: %v", err)
+	}
+	runGit(t, repoDir, "add", "conflict.txt")
+	runGit(t, repoDir, "commit", "-m", "ours")
+
+	mergeCmd := exec.Command("git", "merge", "feature")
+	mergeCmd.Dir = repoDir
+	if output, err := mergeCmd.CombinedOutput(); err == nil {
+		t.Fatalf("expected merge conflict, got success: %s", string(output))
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd error: %v", err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("chdir error: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Fatalf("restore cwd error: %v", err)
+		}
+	})
+
+	var opts cli.Options
+	var cleanup func()
+	withStdout(t, func() {
+		withStdin(t, "", func() {
+			cleanup, err = prepareInteractiveFromRepo(context.Background(), &opts)
+		})
+	})
+	if err != nil {
+		t.Fatalf("prepareInteractiveFromRepo error: %v", err)
+	}
+	if cleanup == nil {
+		t.Fatalf("cleanup function is nil")
+	}
+	t.Cleanup(cleanup)
+
+	if opts.AllowMissingBase {
+		t.Fatalf("AllowMissingBase = true, want false")
+	}
+	if opts.MergedPath == "" || opts.BasePath == "" || opts.LocalPath == "" || opts.RemotePath == "" {
+		t.Fatalf("expected options paths to be set")
+	}
+
+	baseBytes, err := os.ReadFile(opts.BasePath)
+	if err != nil {
+		t.Fatalf("read base temp file: %v", err)
+	}
+	localBytes, err := os.ReadFile(opts.LocalPath)
+	if err != nil {
+		t.Fatalf("read local temp file: %v", err)
+	}
+	remoteBytes, err := os.ReadFile(opts.RemotePath)
+	if err != nil {
+		t.Fatalf("read remote temp file: %v", err)
+	}
+	if string(baseBytes) != "base\n" {
+		t.Fatalf("base temp content = %q, want base", string(baseBytes))
+	}
+	if string(localBytes) != "ours\n" {
+		t.Fatalf("local temp content = %q, want ours", string(localBytes))
+	}
+	if string(remoteBytes) != "theirs\n" {
+		t.Fatalf("remote temp content = %q, want theirs", string(remoteBytes))
+	}
+}
+
+func runGit(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v failed: %v\n%s", args, err, string(output))
 	}
 }

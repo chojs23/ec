@@ -199,6 +199,64 @@ func TestReloadFromFilePreservesManualResolution(t *testing.T) {
 	}
 }
 
+func TestModelInitReturnsNil(t *testing.T) {
+	if cmd := (model{}).Init(); cmd != nil {
+		t.Fatalf("Init() = %v, want nil", cmd)
+	}
+}
+
+func TestRunReturnsThemeLoadError(t *testing.T) {
+	resetThemeForTest()
+	t.Cleanup(resetThemeForTest)
+
+	configDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configDir)
+
+	configPath := filepath.Join(configDir, "ec", themeConfigFileName)
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("MkdirAll error = %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("{bad"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	if err := Run(context.Background(), cli.Options{}); err == nil {
+		t.Fatal("Run() error = nil, want error")
+	}
+}
+
+func TestFirstHexRun(t *testing.T) {
+	start, end := firstHexRun("x1234567y")
+	if start != 1 || end != 8 {
+		t.Fatalf("firstHexRun = (%d, %d), want (1, 8)", start, end)
+	}
+
+	start, end = firstHexRun("nohex")
+	if start != -1 || end != -1 {
+		t.Fatalf("firstHexRun = (%d, %d), want (-1, -1)", start, end)
+	}
+
+	start, end = firstHexRun("x1234y")
+	if start != -1 || end != -1 {
+		t.Fatalf("firstHexRun = (%d, %d), want (-1, -1)", start, end)
+	}
+}
+
+func TestHexHelpers(t *testing.T) {
+	if !isHexRune('F') {
+		t.Fatalf("isHexRune('F') = false, want true")
+	}
+	if isHexRune('g') {
+		t.Fatalf("isHexRune('g') = true, want false")
+	}
+	if !isHexByte('a') {
+		t.Fatalf("isHexByte('a') = false, want true")
+	}
+	if isHexByte('G') {
+		t.Fatalf("isHexByte('G') = true, want false")
+	}
+}
+
 func cliOptionsWithMergedPath(path string) cli.Options {
 	return cli.Options{MergedPath: path}
 }

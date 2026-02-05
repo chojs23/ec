@@ -162,3 +162,106 @@ func TestBuildResultLinesFromEntriesUnresolvedRange(t *testing.T) {
 		t.Fatalf("connector = %q, want |", lines[0].connector)
 	}
 }
+
+func TestBuildResultPreviewLinesUsesSelection(t *testing.T) {
+	doc := markers.Document{
+		Segments: []markers.Segment{
+			markers.TextSegment{Bytes: []byte("start\n")},
+			markers.ConflictSegment{
+				Ours:   []byte("ours\n"),
+				Base:   []byte("base\n"),
+				Theirs: []byte("theirs\n"),
+			},
+			markers.TextSegment{Bytes: []byte("end\n")},
+		},
+		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
+	}
+
+	lines, forced, ranges := buildResultPreviewLines(doc, selectedTheirs, nil)
+	if len(forced) != 0 {
+		t.Fatalf("forced len = %d, want 0", len(forced))
+	}
+	if len(ranges) != 1 {
+		t.Fatalf("ranges len = %d, want 1", len(ranges))
+	}
+	if ranges[0].resolved {
+		t.Fatalf("range resolved = true, want false")
+	}
+	if len(lines) != 3 || lines[1] != "theirs" {
+		t.Fatalf("lines = %v, want theirs in conflict output", lines)
+	}
+}
+
+func TestBuildResultPreviewLinesManualAndNone(t *testing.T) {
+	doc := markers.Document{
+		Segments: []markers.Segment{
+			markers.TextSegment{Bytes: []byte("start\n")},
+			markers.ConflictSegment{
+				Ours:   []byte("ours\n"),
+				Base:   []byte("base\n"),
+				Theirs: []byte("theirs\n"),
+			},
+			markers.TextSegment{Bytes: []byte("middle\n")},
+			markers.ConflictSegment{
+				Ours:       []byte("o2\n"),
+				Theirs:     []byte("t2\n"),
+				Resolution: markers.ResolutionNone,
+			},
+			markers.TextSegment{Bytes: []byte("end\n")},
+		},
+		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}, {SegmentIndex: 3}},
+	}
+
+	manual := map[int][]byte{0: []byte("manual\n")}
+	lines, forced, ranges := buildResultPreviewLines(doc, selectedOurs, manual)
+	if len(lines) != 5 {
+		t.Fatalf("lines len = %d, want 5", len(lines))
+	}
+	if lines[1] != "manual" {
+		t.Fatalf("manual line = %q, want manual", lines[1])
+	}
+	if lines[3] != "[unresolved conflict]" {
+		t.Fatalf("placeholder line = %q, want unresolved conflict", lines[3])
+	}
+	if forced[3] != categoryConflicted {
+		t.Fatalf("forced category = %v, want conflicted", forced[3])
+	}
+	if len(ranges) != 2 {
+		t.Fatalf("ranges len = %d, want 2", len(ranges))
+	}
+	if !ranges[0].resolved {
+		t.Fatalf("range 0 resolved = false, want true")
+	}
+}
+
+func TestEntriesFromLines(t *testing.T) {
+	entries := entriesFromLines([]string{"a", "b"}, categoryAdded)
+	if len(entries) != 2 {
+		t.Fatalf("entries len = %d, want 2", len(entries))
+	}
+	if entries[0].category != categoryAdded || entries[0].baseIndex != -1 {
+		t.Fatalf("entry 0 = %+v, want added with baseIndex -1", entries[0])
+	}
+	if entries[1].text != "b" {
+		t.Fatalf("entry 1 text = %q, want b", entries[1].text)
+	}
+}
+
+func TestResultLabel(t *testing.T) {
+	cases := []struct {
+		resolution markers.Resolution
+		preview    bool
+		want       string
+	}{
+		{markers.ResolutionOurs, false, "ours"},
+		{markers.ResolutionTheirs, false, "theirs"},
+		{markers.ResolutionBoth, false, "both"},
+		{markers.ResolutionNone, false, "none"},
+		{markers.ResolutionOurs, true, "selected ours"},
+	}
+	for _, tc := range cases {
+		if got := resultLabel(tc.resolution, tc.preview); got != tc.want {
+			t.Fatalf("resultLabel(%q, preview=%v) = %q, want %q", tc.resolution, tc.preview, got, tc.want)
+		}
+	}
+}

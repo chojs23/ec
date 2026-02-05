@@ -34,9 +34,16 @@ func (f fileItem) FilterValue() string {
 
 type fileItemDelegate struct{}
 
+type programRunner interface {
+	Run() (tea.Model, error)
+}
+
 var (
 	resolvedLabelStyle   lipgloss.Style
 	unresolvedLabelStyle lipgloss.Style
+	selectProgram        = func(model tea.Model, ctx context.Context) programRunner {
+		return tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
+	}
 )
 
 func (d fileItemDelegate) Height() int {
@@ -96,7 +103,7 @@ func SelectFile(ctx context.Context, candidates []FileCandidate) (string, error)
 	model.list.SetShowPagination(false)
 	model.list.SetFilteringEnabled(false)
 
-	program := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(ctx))
+	program := selectProgram(model, ctx)
 	finalModel, err := program.Run()
 	if err != nil {
 		return "", fmt.Errorf("file selector TUI error: %w", err)
