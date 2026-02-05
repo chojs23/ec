@@ -203,6 +203,83 @@ func cliOptionsWithMergedPath(path string) cli.Options {
 	return cli.Options{MergedPath: path}
 }
 
+func TestModelViewNotReady(t *testing.T) {
+	m := model{}
+	if !strings.Contains(m.View(), "Initializing") {
+		t.Fatalf("expected initializing view")
+	}
+}
+
+func TestModelViewQuittingStates(t *testing.T) {
+	testCases := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{name: "back", err: ErrBackToSelector, want: "Returning to selector"},
+		{name: "error", err: fmt.Errorf("boom"), want: "Error:"},
+		{name: "resolved", err: nil, want: "Resolved! File written."},
+	}
+
+	for _, tc := range testCases {
+		m := model{ready: true, quitting: true, err: tc.err}
+		if !strings.Contains(m.View(), tc.want) {
+			t.Fatalf("%s: expected %q in view", tc.name, tc.want)
+		}
+	}
+}
+
+func TestModelViewNoConflicts(t *testing.T) {
+	doc := markers.Document{Segments: []markers.Segment{markers.TextSegment{Bytes: []byte("hello\n")}}}
+	m := model{ready: true, doc: doc, opts: cliOptionsWithMergedPath("merged.txt")}
+	if !strings.Contains(m.View(), "No conflicts found") {
+		t.Fatalf("expected no conflicts view")
+	}
+}
+
+func TestModelViewReady(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	state, err := engine.NewState(doc, 10)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+	m := model{
+		ready:           true,
+		opts:            cliOptionsWithMergedPath("merged.txt"),
+		state:           state,
+		doc:             doc,
+		currentConflict: 0,
+		selectedSide:    selectedOurs,
+		manualResolved:  map[int][]byte{},
+		viewportOurs:    viewport.New(10, 5),
+		viewportResult:  viewport.New(10, 5),
+		viewportTheirs:  viewport.New(10, 5),
+		width:           80,
+		height:          20,
+	}
+	m.updateViewports()
+
+	view := m.View()
+	if !strings.Contains(view, "Conflict 1/1") {
+		t.Fatalf("expected conflict status in view")
+	}
+	if !strings.Contains(view, "RESULT") {
+		t.Fatalf("expected RESULT header in view")
+	}
+}
+
+func TestRenderToastLine(t *testing.T) {
+	m := model{width: 20, toastMessage: "Saved"}
+	if !strings.Contains(m.renderToastLine(), "Saved") {
+		t.Fatalf("expected toast line to include message")
+	}
+
+	m.toastMessage = ""
+	if strings.Contains(m.renderToastLine(), "Saved") {
+		t.Fatalf("did not expect toast message when empty")
+	}
+}
+
 func TestUpdateNavigationKeys(t *testing.T) {
 	doc := parseMultiConflictDoc(t)
 	m := newModelForDoc(t, doc)
