@@ -350,6 +350,196 @@ func TestUpdateDiscardSelection(t *testing.T) {
 	}
 }
 
+func TestUpdateAcceptSelection(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	m := newModelForDoc(t, doc)
+	m.selectedSide = selectedTheirs
+	m.manualResolved = map[int][]byte{0: []byte("manual\n")}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	result := updated.(model)
+	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionTheirs {
+		t.Fatalf("resolution = %q, want theirs", got)
+	}
+	if len(result.manualResolved) != 0 {
+		t.Fatalf("manualResolved len = %d, want 0", len(result.manualResolved))
+	}
+}
+
+func TestUpdateApplyTheirs(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	m := newModelForDoc(t, doc)
+	m.manualResolved = map[int][]byte{0: []byte("manual\n")}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	result := updated.(model)
+	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionTheirs {
+		t.Fatalf("resolution = %q, want theirs", got)
+	}
+	if len(result.manualResolved) != 0 {
+		t.Fatalf("manualResolved len = %d, want 0", len(result.manualResolved))
+	}
+}
+
+func TestUpdateApplyTheirsAll(t *testing.T) {
+	doc := parseMultiConflictDoc(t)
+	m := newModelForDoc(t, doc)
+	m.manualResolved = map[int][]byte{0: []byte("manual\n"), 1: []byte("manual\n")}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	result := updated.(model)
+	for i := range result.doc.Conflicts {
+		if got := conflictResolution(t, result.doc, i); got != markers.ResolutionTheirs {
+			t.Fatalf("conflict %d resolution = %q, want theirs", i, got)
+		}
+	}
+	if len(result.manualResolved) != 0 {
+		t.Fatalf("manualResolved len = %d, want 0", len(result.manualResolved))
+	}
+}
+
+func TestUpdateApplyBothAndNone(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	m := newModelForDoc(t, doc)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	result := updated.(model)
+	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionBoth {
+		t.Fatalf("resolution = %q, want both", got)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	result = updated.(model)
+	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionNone {
+		t.Fatalf("resolution = %q, want none", got)
+	}
+}
+
+func TestUpdateScrollHorizontalKeys(t *testing.T) {
+	content := "0123456789"
+	m := model{
+		viewportOurs:   viewport.New(5, 1),
+		viewportResult: viewport.New(5, 1),
+		viewportTheirs: viewport.New(5, 1),
+	}
+	for _, viewportModel := range []*viewport.Model{&m.viewportOurs, &m.viewportResult, &m.viewportTheirs} {
+		viewportModel.SetContent(content)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	result := updated.(model)
+	if got := result.viewportOurs.View(); got != "45678" {
+		t.Fatalf("View = %q, want 45678 after L", got)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}})
+	result = updated.(model)
+	if got := result.viewportOurs.View(); got != "01234" {
+		t.Fatalf("View = %q, want 01234 after H", got)
+	}
+}
+
+func TestUpdateKeySeqScroll(t *testing.T) {
+	lines := strings.Join([]string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}, "\n")
+	m := model{
+		viewportOurs:   viewport.New(5, 3),
+		viewportResult: viewport.New(5, 3),
+		viewportTheirs: viewport.New(5, 3),
+	}
+	for _, viewportModel := range []*viewport.Model{&m.viewportOurs, &m.viewportResult, &m.viewportTheirs} {
+		viewportModel.SetContent(lines)
+		viewportModel.ScrollDown(5)
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	result := updated.(model)
+	if cmd == nil {
+		t.Fatalf("expected tick cmd for key sequence")
+	}
+	if result.keySeq != "g" {
+		t.Fatalf("keySeq = %q, want g", result.keySeq)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'g'}})
+	result = updated.(model)
+	if result.keySeq != "" {
+		t.Fatalf("keySeq = %q, want cleared", result.keySeq)
+	}
+	if result.viewportOurs.YOffset != 0 {
+		t.Fatalf("YOffset = %d, want 0 after gg", result.viewportOurs.YOffset)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'G'}})
+	result = updated.(model)
+	if result.viewportOurs.YOffset != 7 {
+		t.Fatalf("YOffset = %d, want 7 after G", result.viewportOurs.YOffset)
+	}
+}
+
+func TestUpdateWriteKey(t *testing.T) {
+	tmpDir := t.TempDir()
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+	if err := os.WriteFile(mergedPath, []byte("original\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	doc := markers.Document{Segments: []markers.Segment{markers.TextSegment{Bytes: []byte("resolved\n")}}}
+	state, err := engine.NewState(doc, 1)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+
+	m := model{
+		state: state,
+		doc:   doc,
+		opts:  cliOptionsWithMergedPath(mergedPath),
+	}
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
+	result := updated.(model)
+	if result.toastMessage != "Saved" {
+		t.Fatalf("toastMessage = %q, want Saved", result.toastMessage)
+	}
+	if cmd == nil {
+		t.Fatalf("expected toast cmd")
+	}
+
+	data, err := os.ReadFile(mergedPath)
+	if err != nil {
+		t.Fatalf("ReadFile error = %v", err)
+	}
+	if string(data) != "resolved\n" {
+		t.Fatalf("merged content = %q, want resolved\\n", string(data))
+	}
+}
+
+func TestUpdateEditorKey(t *testing.T) {
+	originalEditor := os.Getenv("EDITOR")
+	if err := os.Setenv("EDITOR", "true"); err != nil {
+		t.Fatalf("Setenv error = %v", err)
+	}
+	defer os.Setenv("EDITOR", originalEditor)
+
+	m := model{}
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}})
+	_ = updated.(model)
+	if cmd == nil {
+		t.Fatalf("expected editor cmd")
+	}
+	if _, ok := cmd().(editorFinishedMsg); !ok {
+		t.Fatalf("expected editorFinishedMsg")
+	}
+}
+
+func TestUpdateCtrlC(t *testing.T) {
+	m := model{}
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	result := updated.(model)
+	if !result.quitting {
+		t.Fatalf("expected quitting true")
+	}
+}
+
 func TestPrepareFullDiffGuards(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
 
