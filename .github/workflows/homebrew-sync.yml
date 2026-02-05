@@ -1,0 +1,76 @@
+name: sync-homebrew-tap
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      HOMEBREW_EC_TOKEN: ${{ secrets.HOMEBREW_EC_TOKEN }}
+    steps:
+      - name: Compute source tarball checksum
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          url="https://github.com/chojs23/ec/archive/refs/tags/${tag}.tar.gz"
+          curl -L "${url}" -o ec.tar.gz
+          sha256=$(sha256sum ec.tar.gz | cut -d ' ' -f1)
+          echo "TAG=${tag}" >> "$GITHUB_ENV"
+          echo "TARBALL_URL=${url}" >> "$GITHUB_ENV"
+          echo "TARBALL_SHA256=${sha256}" >> "$GITHUB_ENV"
+
+      - name: Clone tap repository
+        run: |
+          git clone "https://x-access-token:${HOMEBREW_EC_TOKEN}@github.com/chojs23/homebrew-ec.git" homebrew-ec
+
+      - name: Update formula
+        run: |
+          python - <<'PY'
+          import os
+          import pathlib
+          import re
+          import sys
+
+          url = os.environ["TARBALL_URL"]
+          sha256 = os.environ["TARBALL_SHA256"]
+          path = pathlib.Path("homebrew-ec/Formula/ec.rb")
+          text = path.read_text(encoding="utf-8")
+
+          updated, url_count = re.subn(r'^\s*url\s+".*"\s*$', f'  url "{url}"', text, flags=re.M)
+          updated, sha_count = re.subn(r'^\s*sha256\s+".*"\s*$', f'  sha256 "{sha256}"', updated, flags=re.M)
+
+          if url_count != 1 or sha_count != 1:
+            raise SystemExit("expected to update exactly one url and one sha256")
+
+          if updated != text:
+            path.write_text(updated, encoding="utf-8")
+          PY
+
+      - name: Commit formula updates
+        run: |
+          cd homebrew-ec
+          if git diff --quiet; then
+            echo "Formula already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/ec.rb
+          git commit -m "chore: update ec formula for ${TAG}"
+          git push origin main
+
+      - name: Tag tap for bottles
+        run: |
+          cd homebrew-ec
+          git fetch --tags
+          if git rev-parse "${TAG}" >/dev/null 2>&1; then
+            echo "Tag already exists"
+            exit 0
+          fi
+          git tag -a "${TAG}" -m "Bottles for ${TAG}"
+          git push origin "${TAG}"

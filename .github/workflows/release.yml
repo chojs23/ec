@@ -59,6 +59,7 @@ jobs:
           cat checksums.txt
 
       - name: Generate release notes from CHANGELOG
+        if: ${{ !endsWith(github.ref_name, '-test') }}
         env:
           GITHUB_REF_NAME: ${{ github.ref_name }}
         run: |
@@ -94,6 +95,7 @@ jobs:
           PY
 
       - name: Create Release
+        if: ${{ !endsWith(github.ref_name, '-test') }}
         uses: softprops/action-gh-release@v2
         with:
           body_path: release_notes.md
