@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/chojs23/ec/internal/cli"
 	"github.com/chojs23/ec/internal/engine"
@@ -199,4 +201,353 @@ func TestReloadFromFilePreservesManualResolution(t *testing.T) {
 
 func cliOptionsWithMergedPath(path string) cli.Options {
 	return cli.Options{MergedPath: path}
+}
+
+func TestUpdateNavigationKeys(t *testing.T) {
+	doc := parseMultiConflictDoc(t)
+	m := newModelForDoc(t, doc)
+	m.pendingScroll = false
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	next := updated.(model)
+	if next.currentConflict != 1 {
+		t.Fatalf("currentConflict = %d, want 1", next.currentConflict)
+	}
+	if next.pendingScroll {
+		t.Fatalf("expected pendingScroll false after updateViewports")
+	}
+
+	updated, _ = next.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	prev := updated.(model)
+	if prev.currentConflict != 0 {
+		t.Fatalf("currentConflict = %d, want 0", prev.currentConflict)
+	}
+}
+
+func TestUpdateApplyAndUndo(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	m := newModelForDoc(t, doc)
+	m.manualResolved = map[int][]byte{0: []byte("manual\n")}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	applied := updated.(model)
+	if len(applied.manualResolved) != 0 {
+		t.Fatalf("manualResolved len = %d, want 0", len(applied.manualResolved))
+	}
+	if got := conflictResolution(t, applied.doc, 0); got != markers.ResolutionOurs {
+		t.Fatalf("resolution = %q, want ours", got)
+	}
+
+	updated, _ = applied.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	undone := updated.(model)
+	if got := conflictResolution(t, undone.doc, 0); got != markers.ResolutionUnset {
+		t.Fatalf("resolution = %q, want unset", got)
+	}
+}
+
+func TestUpdateApplyAllClearsManual(t *testing.T) {
+	doc := parseMultiConflictDoc(t)
+	m := newModelForDoc(t, doc)
+	m.manualResolved = map[int][]byte{0: []byte("manual\n"), 1: []byte("manual\n")}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'O'}})
+	applied := updated.(model)
+	if len(applied.manualResolved) != 0 {
+		t.Fatalf("manualResolved len = %d, want 0", len(applied.manualResolved))
+	}
+	for i := range applied.doc.Conflicts {
+		if got := conflictResolution(t, applied.doc, i); got != markers.ResolutionOurs {
+			t.Fatalf("conflict %d resolution = %q, want ours", i, got)
+		}
+	}
+}
+
+func TestUpdateDiscardSelection(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	m := newModelForDoc(t, doc)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	result := updated.(model)
+	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionNone {
+		t.Fatalf("resolution = %q, want none", got)
+	}
+}
+
+func TestPrepareFullDiffGuards(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+
+	_, _, _, _, useFullDiff := prepareFullDiff(doc, cli.Options{AllowMissingBase: true})
+	if useFullDiff {
+		t.Fatalf("expected useFullDiff false when AllowMissingBase is set")
+	}
+
+	_, _, _, _, useFullDiff = prepareFullDiff(doc, cli.Options{})
+	if useFullDiff {
+		t.Fatalf("expected useFullDiff false when paths are missing")
+	}
+}
+
+func TestPrepareFullDiffLoadFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	basePath := filepath.Join(tmpDir, "base.txt")
+	if err := os.WriteFile(basePath, []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	opts := cli.Options{
+		BasePath:   basePath,
+		LocalPath:  filepath.Join(tmpDir, "missing-local.txt"),
+		RemotePath: filepath.Join(tmpDir, "missing-remote.txt"),
+	}
+	_, _, _, _, useFullDiff := prepareFullDiff(parseSingleConflictDoc(t), opts)
+	if useFullDiff {
+		t.Fatalf("expected useFullDiff false when loadLines fails")
+	}
+}
+
+func TestPrepareFullDiffRangeFailure(t *testing.T) {
+	tmpDir := t.TempDir()
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+
+	if err := os.WriteFile(basePath, []byte("different\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	if err := os.WriteFile(localPath, []byte("ours\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	if err := os.WriteFile(remotePath, []byte("theirs\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	opts := cli.Options{BasePath: basePath, LocalPath: localPath, RemotePath: remotePath}
+	_, _, _, _, useFullDiff := prepareFullDiff(parseSingleConflictDoc(t), opts)
+	if useFullDiff {
+		t.Fatalf("expected useFullDiff false when conflict ranges cannot be computed")
+	}
+}
+
+func parseMultiConflictDoc(t *testing.T) markers.Document {
+	t.Helper()
+	data := []byte("start\n<<<<<<< HEAD\nours1\n=======\ntheirs1\n>>>>>>> branch\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nend\n")
+	doc, err := markers.Parse(data)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	return doc
+}
+
+func newModelForDoc(t *testing.T, doc markers.Document) model {
+	t.Helper()
+	state, err := engine.NewState(doc, 10)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+	return model{
+		state:           state,
+		doc:             doc,
+		currentConflict: 0,
+		selectedSide:    selectedOurs,
+		manualResolved:  map[int][]byte{},
+		viewportOurs:    viewport.New(10, 5),
+		viewportResult:  viewport.New(10, 5),
+		viewportTheirs:  viewport.New(10, 5),
+	}
+}
+
+func conflictResolution(t *testing.T, doc markers.Document, index int) markers.Resolution {
+	t.Helper()
+	ref := doc.Conflicts[index]
+	seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+	if !ok {
+		t.Fatalf("expected conflict segment")
+	}
+	return seg.Resolution
+}
+
+func TestEnsureVisibleOffsets(t *testing.T) {
+	viewportModel := viewport.New(10, 4)
+	viewportModel.YOffset = 3
+	ensureVisible(&viewportModel, 0, 10)
+	if viewportModel.YOffset != 0 {
+		t.Fatalf("YOffset = %d, want 0", viewportModel.YOffset)
+	}
+
+	ensureVisible(&viewportModel, 9, 10)
+	if viewportModel.YOffset != 6 {
+		t.Fatalf("YOffset = %d, want 6", viewportModel.YOffset)
+	}
+
+	viewportModel.YOffset = 5
+	ensureVisible(&viewportModel, 1, 0)
+	if viewportModel.YOffset != 0 {
+		t.Fatalf("YOffset = %d, want 0 for empty total", viewportModel.YOffset)
+	}
+
+	viewportModel.Height = 0
+	viewportModel.YOffset = 5
+	ensureVisible(&viewportModel, 2, 10)
+	if viewportModel.YOffset != 5 {
+		t.Fatalf("YOffset = %d, want unchanged when height is zero", viewportModel.YOffset)
+	}
+}
+
+func TestScrollToTopAndBottom(t *testing.T) {
+	lines := strings.Join([]string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}, "\n")
+
+	m := model{
+		viewportOurs:   viewport.New(5, 3),
+		viewportResult: viewport.New(5, 3),
+		viewportTheirs: viewport.New(5, 3),
+	}
+	for _, viewportModel := range []*viewport.Model{&m.viewportOurs, &m.viewportResult, &m.viewportTheirs} {
+		viewportModel.SetContent(lines)
+		viewportModel.ScrollDown(5)
+	}
+
+	m.scrollToTop()
+	for _, viewportModel := range []*viewport.Model{&m.viewportOurs, &m.viewportResult, &m.viewportTheirs} {
+		if viewportModel.YOffset != 0 {
+			t.Fatalf("YOffset = %d, want 0 after scrollToTop", viewportModel.YOffset)
+		}
+	}
+
+	m.scrollToBottom()
+	for _, viewportModel := range []*viewport.Model{&m.viewportOurs, &m.viewportResult, &m.viewportTheirs} {
+		if viewportModel.YOffset != 7 {
+			t.Fatalf("YOffset = %d, want 7 after scrollToBottom", viewportModel.YOffset)
+		}
+	}
+}
+
+func TestScrollHorizontal(t *testing.T) {
+	content := "0123456789"
+
+	m := model{
+		viewportOurs:   viewport.New(5, 1),
+		viewportResult: viewport.New(5, 1),
+		viewportTheirs: viewport.New(5, 1),
+	}
+	for _, viewportModel := range []*viewport.Model{&m.viewportOurs, &m.viewportResult, &m.viewportTheirs} {
+		viewportModel.SetContent(content)
+	}
+
+	m.scrollHorizontal(4)
+	for _, viewportModel := range []*viewport.Model{&m.viewportOurs, &m.viewportResult, &m.viewportTheirs} {
+		if got := viewportModel.View(); got != "45678" {
+			t.Fatalf("View = %q, want 45678 after scrollHorizontal", got)
+		}
+	}
+
+	m.scrollHorizontal(-2)
+	for _, viewportModel := range []*viewport.Model{&m.viewportOurs, &m.viewportResult, &m.viewportTheirs} {
+		if got := viewportModel.View(); got != "23456" {
+			t.Fatalf("View = %q, want 23456 after scrollHorizontal left", got)
+		}
+	}
+}
+
+func TestToastAndKeySeqExpiry(t *testing.T) {
+	m := model{
+		toastMessage:   "Saved",
+		toastSeq:       2,
+		keySeq:         "g",
+		keySeqTimeout:  4,
+		viewportOurs:   viewport.New(1, 1),
+		viewportResult: viewport.New(1, 1),
+		viewportTheirs: viewport.New(1, 1),
+	}
+
+	updated, _ := m.Update(toastExpiredMsg{id: 1})
+	updatedModel := updated.(model)
+	if updatedModel.toastMessage == "" {
+		t.Fatalf("toastMessage cleared for mismatched id")
+	}
+
+	updated, _ = updatedModel.Update(toastExpiredMsg{id: 2})
+	updatedModel = updated.(model)
+	if updatedModel.toastMessage != "" {
+		t.Fatalf("toastMessage not cleared for matching id")
+	}
+
+	updatedModel.keySeq = "g"
+	updated, _ = updatedModel.Update(keySeqExpiredMsg{id: 3})
+	updatedModel = updated.(model)
+	if updatedModel.keySeq == "" {
+		t.Fatalf("keySeq cleared for mismatched id")
+	}
+
+	updated, _ = updatedModel.Update(keySeqExpiredMsg{id: 4})
+	updatedModel = updated.(model)
+	if updatedModel.keySeq != "" {
+		t.Fatalf("keySeq not cleared for matching id")
+	}
+}
+
+func TestWriteResolvedAllowsUnresolved(t *testing.T) {
+	tmpDir := t.TempDir()
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+	if err := os.WriteFile(mergedPath, []byte("original\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	input := []byte("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n")
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+	state, err := engine.NewState(doc, 1)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+
+	m := model{
+		state: state,
+		opts:  cli.Options{MergedPath: mergedPath},
+	}
+
+	if err := m.writeResolved(); err != nil {
+		t.Fatalf("writeResolved error = %v", err)
+	}
+
+	data, err := os.ReadFile(mergedPath)
+	if err != nil {
+		t.Fatalf("ReadFile error = %v", err)
+	}
+	if !bytes.Contains(data, []byte("<<<<<<<")) {
+		t.Fatalf("expected unresolved markers to be written")
+	}
+}
+
+func TestWriteResolvedCreatesBackup(t *testing.T) {
+	tmpDir := t.TempDir()
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+	if err := os.WriteFile(mergedPath, []byte("original\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	doc := markers.Document{Segments: []markers.Segment{markers.TextSegment{Bytes: []byte("resolved\n")}}}
+	state, err := engine.NewState(doc, 1)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+
+	m := model{
+		state: state,
+		opts:  cli.Options{MergedPath: mergedPath, Backup: true},
+	}
+
+	if err := m.writeResolved(); err != nil {
+		t.Fatalf("writeResolved error = %v", err)
+	}
+
+	backupPath := mergedPath + ".ec.bak"
+	backup, err := os.ReadFile(backupPath)
+	if err != nil {
+		t.Fatalf("ReadFile backup error = %v", err)
+	}
+	if string(backup) != "original\n" {
+		t.Fatalf("backup content = %q, want %q", string(backup), "original\\n")
+	}
 }
