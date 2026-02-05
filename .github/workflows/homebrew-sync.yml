@@ -67,6 +67,8 @@ jobs:
       - name: Tag tap for bottles
         run: |
           cd homebrew-ec
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
           git fetch --tags
           if git rev-parse "${TAG}" >/dev/null 2>&1; then
             echo "Tag already exists"
