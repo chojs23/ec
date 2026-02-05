@@ -26,9 +26,11 @@ go install github.com/chojs23/ec/cmd/ec@latest
 
 Option 2. Install script
 
+Downloads the GitHub release binary. VERSION is optional and defaults to latest.
+
 ```
 ./scripts/install.sh
-PREFIX=/usr/local ./scripts/install.sh
+VERSION=v0.1.3 PREFIX=/usr/local ./scripts/install.sh
 ```
 
 Option 3. Build from source
