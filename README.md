@@ -1,5 +1,7 @@
 # ec (easy-conflict)
 
+[![codecov](https://codecov.io/gh/chojs23/ec/graph/badge.svg?token=AX5BFUF8YN)](https://codecov.io/gh/chojs23/ec)
+
 <img width="1613" height="848" alt="Image" src="https://github.com/user-attachments/assets/f6903327-15c6-4fc0-9427-5bd820ba02ec" />
 
 ![Demo](https://github.com/user-attachments/assets/15022303-9948-4fdd-a6e5-2f909213d6a9)

@@ -149,6 +149,79 @@ func TestRenderWithUnresolvedKeepsMarkers(t *testing.T) {
 	}
 }
 
+type fakeSegment struct{}
+
+func (fakeSegment) isSegment() {}
+
+func TestRenderResolvedUnknownSegment(t *testing.T) {
+	doc := Document{Segments: []Segment{fakeSegment{}}}
+	_, err := RenderResolved(doc)
+	if err == nil {
+		t.Fatalf("expected error for unknown segment")
+	}
+}
+
+func TestRenderWithUnresolvedUnknownSegment(t *testing.T) {
+	doc := Document{Segments: []Segment{fakeSegment{}}}
+	_, err := RenderWithUnresolved(doc)
+	if err == nil {
+		t.Fatalf("expected error for unknown segment")
+	}
+}
+
+func TestRenderWithUnresolvedWritesBaseMarker(t *testing.T) {
+	doc := Document{Segments: []Segment{ConflictSegment{
+		Ours:        []byte("ours\n"),
+		Base:        []byte("base\n"),
+		Theirs:      []byte("theirs\n"),
+		OursLabel:   "HEAD",
+		BaseLabel:   "BASE",
+		TheirsLabel: "BRANCH",
+		Resolution:  ResolutionUnset,
+	}}}
+
+	rendered, err := RenderWithUnresolved(doc)
+	if err != nil {
+		t.Fatalf("RenderWithUnresolved error: %v", err)
+	}
+	if !bytes.Contains(rendered, []byte("||||||| BASE\n")) {
+		t.Fatalf("expected base marker with label")
+	}
+}
+
+func TestRenderWithUnresolvedResolutionBranches(t *testing.T) {
+	baseSeg := ConflictSegment{
+		Ours:       []byte("ours\n"),
+		Theirs:     []byte("theirs\n"),
+		Resolution: ResolutionOurs,
+	}
+
+	variants := []struct {
+		name       string
+		resolution Resolution
+		want       string
+	}{
+		{name: "ours", resolution: ResolutionOurs, want: "ours\n"},
+		{name: "theirs", resolution: ResolutionTheirs, want: "theirs\n"},
+		{name: "both", resolution: ResolutionBoth, want: "ours\ntheirs\n"},
+		{name: "none", resolution: ResolutionNone, want: ""},
+	}
+
+	for _, tt := range variants {
+		seg := baseSeg
+		seg.Resolution = tt.resolution
+		doc := Document{Segments: []Segment{seg}}
+
+		rendered, err := RenderWithUnresolved(doc)
+		if err != nil {
+			t.Fatalf("%s: RenderWithUnresolved error: %v", tt.name, err)
+		}
+		if string(rendered) != tt.want {
+			t.Fatalf("%s: output = %q, want %q", tt.name, string(rendered), tt.want)
+		}
+	}
+}
+
 func TestRenderResolvedMultiple(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "multiple.input"))
 	if err != nil {

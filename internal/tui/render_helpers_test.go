@@ -68,3 +68,97 @@ func TestApplyMergedResolutionsManualHunk(t *testing.T) {
 		t.Fatalf("conflict 0 resolution = %q, want unset", seg.Resolution)
 	}
 }
+
+func TestDiffEntriesCategories(t *testing.T) {
+	base := []string{"line1", "line2"}
+	side := []string{"line1", "line2-mod"}
+	entries := diffEntries(base, side)
+	if len(entries) != 3 {
+		t.Fatalf("entries len = %d, want 3", len(entries))
+	}
+	if entries[1].category != categoryRemoved {
+		t.Fatalf("removed category = %v, want removed", entries[1].category)
+	}
+	if entries[2].category != categoryModified {
+		t.Fatalf("modified category = %v, want modified", entries[2].category)
+	}
+	if entries[2].baseIndex != 1 {
+		t.Fatalf("modified baseIndex = %d, want 1", entries[2].baseIndex)
+	}
+
+	base = []string{"line1"}
+	side = []string{"line1", "line2"}
+	entries = diffEntries(base, side)
+	if len(entries) != 2 {
+		t.Fatalf("entries len = %d, want 2", len(entries))
+	}
+	if entries[1].category != categoryAdded {
+		t.Fatalf("added category = %v, want added", entries[1].category)
+	}
+}
+
+func TestMarkConflictedInRanges(t *testing.T) {
+	ours := []lineEntry{{text: "same", category: categoryDefault, baseIndex: 0}, {text: "ours", category: categoryDefault, baseIndex: 1}}
+	theirs := []lineEntry{{text: "same", category: categoryDefault, baseIndex: 0}, {text: "theirs", category: categoryDefault, baseIndex: 1}}
+	ranges := []conflictRange{{baseStart: 0, baseEnd: 1}}
+
+	markConflictedInRanges(&ours, &theirs, ranges)
+	if ours[0].category != categoryDefault || theirs[0].category != categoryDefault {
+		t.Fatalf("unexpected conflict marking for base index 0")
+	}
+	if ours[1].category != categoryDefault || theirs[1].category != categoryDefault {
+		t.Fatalf("unexpected conflict marking outside range")
+	}
+}
+
+func TestBuildPaneLinesFromEntriesMarkers(t *testing.T) {
+	data := []byte("start\n<<<<<<< HEAD\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> branch\nend\n")
+	doc, err := markers.Parse(data)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	baseLines := []string{"start", "base", "end"}
+	oursLines := []string{"start", "ours", "end"}
+	theirsLines := []string{"start", "theirs", "end"}
+
+	ranges, ok := computeConflictRanges(doc, baseLines, oursLines, theirsLines)
+	if !ok {
+		t.Fatalf("computeConflictRanges failed")
+	}
+
+	entries := diffEntries(baseLines, oursLines)
+	lines, _ := buildPaneLinesFromEntries(doc, paneOurs, 0, selectedOurs, entries, ranges)
+
+	foundStart := false
+	foundEnd := false
+	for _, line := range lines {
+		switch line.text {
+		case ">> selected hunk start (ours) >>":
+			foundStart = line.category == categoryInsertMarker && line.selected
+		case ">> selected hunk end >>":
+			foundEnd = line.category == categoryInsertMarker && line.selected
+		}
+	}
+	if !foundStart || !foundEnd {
+		t.Fatalf("expected selected hunk markers in pane lines")
+	}
+}
+
+func TestBuildResultLinesFromEntriesUnresolvedRange(t *testing.T) {
+	entries := []lineEntry{{text: "ours", category: categoryAdded, baseIndex: -1}}
+	ranges := []resultRange{{start: 0, end: 1, resolved: false}}
+	lines, _ := buildResultLinesFromEntries(entries, ranges, 0, map[int]lineCategory{})
+	if len(lines) != 1 {
+		t.Fatalf("lines len = %d, want 1", len(lines))
+	}
+	if lines[0].category != categoryConflicted {
+		t.Fatalf("category = %v, want conflicted", lines[0].category)
+	}
+	if !lines[0].dim {
+		t.Fatalf("expected dim line for unresolved range")
+	}
+	if lines[0].connector != "|" {
+		t.Fatalf("connector = %q, want |", lines[0].connector)
+	}
+}
