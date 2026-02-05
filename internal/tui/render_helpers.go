@@ -80,11 +80,11 @@ func renderLines(
 			// In the result pane we dim unresolved-preview lines by muting the text.
 			// For conflicted lines, keep strong contrast against the (light) red background.
 			if useWhiteDim {
-				style = style.Copy().Foreground(lipgloss.Color("231"))
+				style = style.Copy().Foreground(dimForegroundLight)
 			} else if line.category == categoryConflicted {
-				style = style.Copy().Foreground(lipgloss.Color("16"))
+				style = style.Copy().Foreground(dimForegroundDark)
 			} else {
-				style = style.Copy().Foreground(lipgloss.Color("244"))
+				style = style.Copy().Foreground(dimForegroundMuted)
 			}
 		}
 		if line.underline {

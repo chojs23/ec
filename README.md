@@ -239,6 +239,97 @@ Keybindings are vim-like by default.
 - w: write file without quitting
 - q: back to selector or quit
 
+## Theme configuration
+
+The TUI can load colors from a theme config file.
+
+Config path:
+
+- $XDG_CONFIG_HOME/ec/themes.json (defaults to ~/.config/ec/themes.json)
+
+Example:
+
+```
+{
+  "default": "warm",
+  "themes": {
+    "warm": {
+      "header_bg": "94",
+      "header_fg": "230",
+      "added_bg": "58",
+      "conflicted_bg": "88",
+      "result_fg": "#f1f1f1",
+      "modified_bg": "#2f5f7a"
+    }
+  }
+}
+```
+
+Missing keys fall back to the built-in defaults.
+
+Hex colors require a TrueColor-capable terminal to avoid 256-color downsampling.
+
+Supported keys:
+`title_fg`, `pane_border`, `selected_pane_border`, `side_pane_border`, `selected_side_border`,
+`header_bg`, `header_fg`, `footer_bg`, `footer_fg`, `line_number`, `ours_highlight_bg`,
+`ours_highlight_fg`, `theirs_highlight_bg`, `theirs_highlight_fg`, `result_fg`,
+`result_highlight_bg`, `result_highlight_fg`, `modified_bg`, `modified_fg`, `added_bg`,
+`added_fg`, `removed_bg`, `removed_fg`, `conflicted_bg`, `conflicted_fg`,
+`insert_marker_fg`, `selected_hunk_marker_fg`, `selected_hunk_marker_bg`, `selected_hunk_bg`,
+`status_resolved_fg`, `status_unresolved_fg`, `result_resolved_marker_fg`,
+`result_resolved_border`, `result_unresolved_border`, `toast_bg`, `toast_fg`,
+`selector_resolved_fg`, `selector_unresolved_fg`, `dim_foreground_light`,
+`dim_foreground_dark`, `dim_foreground_muted`.
+
+<details>
+<summary>Default theme colors</summary>
+
+| Key | Default |
+| --- | --- |
+| `title_fg` | `170` |
+| `pane_border` | `63` |
+| `selected_pane_border` | `205` |
+| `side_pane_border` | `255` |
+| `selected_side_border` | `33` |
+| `header_bg` | `62` |
+| `header_fg` | `230` |
+| `footer_bg` | `236` |
+| `footer_fg` | `243` |
+| `line_number` | `241` |
+| `ours_highlight_bg` | `24` |
+| `ours_highlight_fg` | `230` |
+| `theirs_highlight_bg` | `52` |
+| `theirs_highlight_fg` | `230` |
+| `result_fg` | `231` |
+| `result_highlight_bg` | `60` |
+| `result_highlight_fg` | `230` |
+| `modified_bg` | `24` |
+| `modified_fg` | `231` |
+| `added_bg` | `28` |
+| `added_fg` | `231` |
+| `removed_bg` | `237` |
+| `removed_fg` | `250` |
+| `conflicted_bg` | `131` |
+| `conflicted_fg` | `231` |
+| `insert_marker_fg` | `196` |
+| `selected_hunk_marker_fg` | `226` |
+| `selected_hunk_marker_bg` | `88` |
+| `selected_hunk_bg` | `236` |
+| `status_resolved_fg` | `42` |
+| `status_unresolved_fg` | `196` |
+| `result_resolved_marker_fg` | `42` |
+| `result_resolved_border` | `42` |
+| `result_unresolved_border` | `196` |
+| `toast_bg` | `22` |
+| `toast_fg` | `230` |
+| `selector_resolved_fg` | `42` |
+| `selector_unresolved_fg` | `196` |
+| `dim_foreground_light` | `231` |
+| `dim_foreground_dark` | `16` |
+| `dim_foreground_muted` | `244` |
+
+</details>
+
 ## Backup behavior
 
 Backups are off by default. Use --backup to write a sibling file named <merged>.ec.bak before writing the result.
