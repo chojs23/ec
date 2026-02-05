@@ -25,122 +25,38 @@ const (
 )
 
 var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("170")).
-			Padding(0, 1)
+	titleStyle                lipgloss.Style
+	paneStyle                 lipgloss.Style
+	selectedPaneStyle         lipgloss.Style
+	oursPaneStyle             lipgloss.Style
+	theirsPaneStyle           lipgloss.Style
+	selectedSidePaneStyle     lipgloss.Style
+	headerStyle               lipgloss.Style
+	footerStyle               lipgloss.Style
+	lineNumberStyle           lipgloss.Style
+	oursHighlightStyle        lipgloss.Style
+	theirsHighlightStyle      lipgloss.Style
+	resultLineStyle           lipgloss.Style
+	resultHighlightStyle      lipgloss.Style
+	modifiedLineStyle         lipgloss.Style
+	addedLineStyle            lipgloss.Style
+	removedLineStyle          lipgloss.Style
+	conflictedLineStyle       lipgloss.Style
+	insertMarkerStyle         lipgloss.Style
+	selectedHunkMarkerStyle   lipgloss.Style
+	selectedHunkBackground    lipgloss.Color
+	statusResolvedStyle       lipgloss.Style
+	statusUnresolvedStyle     lipgloss.Style
+	resultResolvedMarkerStyle lipgloss.Style
+	resultResolvedPaneStyle   lipgloss.Style
+	resultUnresolvedPaneStyle lipgloss.Style
+	toastStyle                lipgloss.Style
+	toastLineStyle            lipgloss.Style
+	resultTitleStyle          lipgloss.Style
 
-	paneStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("63")).
-			Padding(0, 1)
-
-	selectedPaneStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("205")).
-				Padding(0, 1)
-
-	oursPaneStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("255")).
-			Padding(0, 1)
-
-	theirsPaneStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("255")).
-			Padding(0, 1)
-
-	selectedSidePaneStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("33")).
-				Padding(0, 1)
-
-	headerStyle = lipgloss.NewStyle().
-			Bold(true).
-			Background(lipgloss.Color("62")).
-			Foreground(lipgloss.Color("230")).
-			Padding(0, 2)
-
-	footerStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("236")).
-			Foreground(lipgloss.Color("243")).
-			Padding(0, 2)
-
-	lineNumberStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241"))
-
-	oursHighlightStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("24")).
-				Foreground(lipgloss.Color("230"))
-
-	theirsHighlightStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("52")).
-				Foreground(lipgloss.Color("230"))
-
-	resultLineStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("231"))
-
-	resultHighlightStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("60")).
-				Foreground(lipgloss.Color("230"))
-
-	modifiedLineStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("24")).
-				Foreground(lipgloss.Color("231"))
-
-	addedLineStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("28")).
-			Foreground(lipgloss.Color("231"))
-
-	removedLineStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("237")).
-				Foreground(lipgloss.Color("250"))
-
-	conflictedLineStyle = lipgloss.NewStyle().
-				Background(lipgloss.Color("131")).
-				Foreground(lipgloss.Color("231"))
-
-	insertMarkerStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("196")).
-				Bold(true)
-
-	selectedHunkMarkerStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("226")).
-				Background(lipgloss.Color("88")).
-				Bold(true)
-
-	selectedHunkBackground = lipgloss.Color("236")
-
-	statusResolvedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("42")).
-				Bold(true)
-
-	statusUnresolvedStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("196")).
-				Bold(true)
-
-	resultResolvedMarkerStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("42")).
-					Bold(true)
-
-	resultResolvedPaneStyle = lipgloss.NewStyle().
-				Border(lipgloss.RoundedBorder()).
-				BorderForeground(lipgloss.Color("42")).
-				Padding(0, 1)
-
-	resultUnresolvedPaneStyle = lipgloss.NewStyle().
-					Border(lipgloss.RoundedBorder()).
-					BorderForeground(lipgloss.Color("196")).
-					Padding(0, 1)
-
-	toastStyle = lipgloss.NewStyle().
-			Background(lipgloss.Color("22")).
-			Foreground(lipgloss.Color("230")).
-			Padding(0, 1)
-
-	toastLineStyle = lipgloss.NewStyle().
-			Align(lipgloss.Right).
-			Padding(0, 2)
+	dimForegroundLight lipgloss.Color
+	dimForegroundDark  lipgloss.Color
+	dimForegroundMuted lipgloss.Color
 )
 
 var ErrBackToSelector = fmt.Errorf("back to selector")
@@ -182,6 +98,9 @@ const (
 
 // Run starts the TUI for interactive conflict resolution.
 func Run(ctx context.Context, opts cli.Options) error {
+	if err := ensureThemeLoaded(); err != nil {
+		return err
+	}
 	// Generate diff3 view
 	diff3Bytes, err := gitmerge.MergeFileDiff3(ctx, opts.LocalPath, opts.BasePath, opts.RemotePath)
 	if err != nil {
@@ -734,11 +653,7 @@ func (m model) View() string {
 	if allResolved(m.doc, m.manualResolved) {
 		resultStyle = resultResolvedPaneStyle
 	}
-	resultTitle := lipgloss.NewStyle().
-		Bold(true).
-		Background(lipgloss.Color("62")).
-		Padding(0, 2).
-		Render("RESULT " + statusStyle.Render("("+statusText+")"))
+	resultTitle := resultTitleStyle.Render("RESULT " + statusStyle.Render("("+statusText+")"))
 	resultPane := resultStyle.Render(
 		resultTitle + "\n" +
 			m.viewportResult.View(),

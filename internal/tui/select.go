@@ -35,8 +35,8 @@ func (f fileItem) FilterValue() string {
 type fileItemDelegate struct{}
 
 var (
-	resolvedLabelStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
-	unresolvedLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196"))
+	resolvedLabelStyle   lipgloss.Style
+	unresolvedLabelStyle lipgloss.Style
 )
 
 func (d fileItemDelegate) Height() int {
@@ -81,6 +81,9 @@ var ErrSelectorQuit = fmt.Errorf("selector quit")
 
 // SelectFile opens a TUI selector and returns the chosen repo-relative path.
 func SelectFile(ctx context.Context, candidates []FileCandidate) (string, error) {
+	if err := ensureThemeLoaded(); err != nil {
+		return "", err
+	}
 	items := make([]list.Item, 0, len(candidates))
 	for _, candidate := range candidates {
 		items = append(items, fileItem{path: candidate.Path, resolved: candidate.Resolved})
