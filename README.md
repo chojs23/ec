@@ -30,7 +30,7 @@ brew install chojs23/tap/ec
 go install github.com/chojs23/ec/cmd/ec@latest
 ```
 
-### via curl
+### Via curl
 
 ```
 curl -fsSL https://raw.githubusercontent.com/chojs23/ec/main/scripts/install.sh | sh
@@ -70,16 +70,48 @@ pikaur -S easy-conflict-bin
 
 ## Quick start
 
-1. Run with no args inside a git repo that has conflicts
+Run with no args inside a git repo that has conflicts
 
 ```
 ec
 ```
 
-2. Use it as a mergetool
+### Notes
+
+ec does not run git add after you write
+
+Git will still decide whether the merge is resolved based on the file contents
+
+## Git mergetool configuration
+
+You can set ec as your git mergetool by adding this to your git config
 
 ```
-git mergetool --tool ec
+git config --global merge.tool ec
+git config --global mergetool.ec.cmd 'ec "$BASE" "$LOCAL" "$REMOTE" "$MERGED"'
+git config --global mergetool.ec.trustExitCode true
+```
+
+## Usage
+
+Interactive
+
+```
+ec <BASE> <LOCAL> <REMOTE> <MERGED>
+ec --base <path> --local <path> --remote <path> --merged <path>
+```
+
+No args mode
+
+```
+ec
+```
+
+Non interactive
+
+```
+ec --check --merged <path>
+ec --apply-all ours --base <path> --local <path> --remote <path> --merged <path>
 ```
 
 ## Neovim plugin (terminal buffer)
@@ -88,13 +120,13 @@ This repo includes a minimal Neovim plugin that opens ec in a terminal buffer.
 
 Install with your plugin manager and ensure `ec` is on your PATH.
 
-Minimal config:
+### Minimal config
 
 ```lua
 require("ec").setup()
 ```
 
-Lazy.nvim minimal config:
+Using lazy.nvim
 
 ```lua
 {
@@ -107,8 +139,6 @@ Lazy.nvim minimal config:
 
 <details>
 <summary>Default config</summary>
-
-Config defaults:
 
 ```lua
 {
@@ -151,51 +181,11 @@ Float option notes:
 
 </details>
 
-Usage:
+### Commands
 
 ```
 :Ec
 :Ec --base <path> --local <path> --remote <path> --merged <path>
-```
-
-## Git mergetool configuration
-
-Add this to your git config
-
-```
-[merge]
-  tool = ec
-
-[mergetool "ec"]
-  cmd = ec "$BASE" "$LOCAL" "$REMOTE" "$MERGED"
-  trustExitCode = true
-```
-
-Notes
-
-1. ec does not run git add after you write
-2. Git will still decide whether the merge is resolved based on the file contents
-
-## Usage
-
-Interactive
-
-```
-ec <BASE> <LOCAL> <REMOTE> <MERGED>
-ec --base <path> --local <path> --remote <path> --merged <path>
-```
-
-No args mode
-
-```
-ec
-```
-
-Non interactive
-
-```
-ec --check --merged <path>
-ec --apply-all ours --base <path> --local <path> --remote <path> --merged <path>
 ```
 
 ## Resolver screen
@@ -206,7 +196,7 @@ Conflicts are shown as focused blocks. The center pane is the output that will b
 
 You can move between conflicts, choose a side, and apply it. The status line shows which conflict you are on and whether it is resolved.
 
-Use e to open $EDITOR with the current result. When you exit the editor, the resolver reloads the merged file and keeps manual edits.
+Use `e` to open $EDITOR with the current result. When you exit the editor, the resolver reloads the merged file and keeps manual edits.
 
 Blue: modified lines (changed vs base)
 
@@ -245,7 +235,9 @@ The TUI can load colors from a theme config file.
 
 Config path:
 
-- $XDG_CONFIG_HOME/ec/themes.json (defaults to ~/.config/ec/themes.json)
+```
+$XDG_CONFIG_HOME/ec/themes.json (defaults to ~/.config/ec/themes.json)
+```
 
 Example:
 
@@ -284,49 +276,49 @@ Supported keys:
 <details>
 <summary>Default theme colors</summary>
 
-| Key | Default |
-| --- | --- |
-| `title_fg` | `170` |
-| `pane_border` | `63` |
-| `selected_pane_border` | `205` |
-| `side_pane_border` | `255` |
-| `selected_side_border` | `33` |
-| `header_bg` | `62` |
-| `header_fg` | `230` |
-| `footer_bg` | `236` |
-| `footer_fg` | `243` |
-| `line_number` | `241` |
-| `ours_highlight_bg` | `24` |
-| `ours_highlight_fg` | `230` |
-| `theirs_highlight_bg` | `52` |
-| `theirs_highlight_fg` | `230` |
-| `result_fg` | `231` |
-| `result_highlight_bg` | `60` |
-| `result_highlight_fg` | `230` |
-| `modified_bg` | `24` |
-| `modified_fg` | `231` |
-| `added_bg` | `28` |
-| `added_fg` | `231` |
-| `removed_bg` | `237` |
-| `removed_fg` | `250` |
-| `conflicted_bg` | `131` |
-| `conflicted_fg` | `231` |
-| `insert_marker_fg` | `196` |
-| `selected_hunk_marker_fg` | `226` |
-| `selected_hunk_marker_bg` | `88` |
-| `selected_hunk_bg` | `236` |
-| `status_resolved_fg` | `42` |
-| `status_unresolved_fg` | `196` |
-| `result_resolved_marker_fg` | `42` |
-| `result_resolved_border` | `42` |
-| `result_unresolved_border` | `196` |
-| `toast_bg` | `22` |
-| `toast_fg` | `230` |
-| `selector_resolved_fg` | `42` |
-| `selector_unresolved_fg` | `196` |
-| `dim_foreground_light` | `231` |
-| `dim_foreground_dark` | `16` |
-| `dim_foreground_muted` | `244` |
+| Key                         | Default |
+| --------------------------- | ------- |
+| `title_fg`                  | `170`   |
+| `pane_border`               | `63`    |
+| `selected_pane_border`      | `205`   |
+| `side_pane_border`          | `255`   |
+| `selected_side_border`      | `33`    |
+| `header_bg`                 | `62`    |
+| `header_fg`                 | `230`   |
+| `footer_bg`                 | `236`   |
+| `footer_fg`                 | `243`   |
+| `line_number`               | `241`   |
+| `ours_highlight_bg`         | `24`    |
+| `ours_highlight_fg`         | `230`   |
+| `theirs_highlight_bg`       | `52`    |
+| `theirs_highlight_fg`       | `230`   |
+| `result_fg`                 | `231`   |
+| `result_highlight_bg`       | `60`    |
+| `result_highlight_fg`       | `230`   |
+| `modified_bg`               | `24`    |
+| `modified_fg`               | `231`   |
+| `added_bg`                  | `28`    |
+| `added_fg`                  | `231`   |
+| `removed_bg`                | `237`   |
+| `removed_fg`                | `250`   |
+| `conflicted_bg`             | `131`   |
+| `conflicted_fg`             | `231`   |
+| `insert_marker_fg`          | `196`   |
+| `selected_hunk_marker_fg`   | `226`   |
+| `selected_hunk_marker_bg`   | `88`    |
+| `selected_hunk_bg`          | `236`   |
+| `status_resolved_fg`        | `42`    |
+| `status_unresolved_fg`      | `196`   |
+| `result_resolved_marker_fg` | `42`    |
+| `result_resolved_border`    | `42`    |
+| `result_unresolved_border`  | `196`   |
+| `toast_bg`                  | `22`    |
+| `toast_fg`                  | `230`   |
+| `selector_resolved_fg`      | `42`    |
+| `selector_unresolved_fg`    | `196`   |
+| `dim_foreground_light`      | `231`   |
+| `dim_foreground_dark`       | `16`    |
+| `dim_foreground_muted`      | `244`   |
 
 </details>
 
