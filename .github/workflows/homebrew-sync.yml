@@ -13,7 +13,7 @@ jobs:
     if: ${{ !endsWith(github.ref_name, '-test') }}
     runs-on: ubuntu-latest
     env:
-      HOMEBREW_EC_TOKEN: ${{ secrets.HOMEBREW_EC_TOKEN }}
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
     steps:
       - name: Compute source tarball checksum
         run: |
@@ -27,7 +27,7 @@ jobs:
 
       - name: Clone tap repository
         run: |
-          git clone "https://x-access-token:${HOMEBREW_EC_TOKEN}@github.com/chojs23/homebrew-ec.git" homebrew-ec
+          git clone "https://x-access-token:${HOMEBREW_TAP_TOKEN}@github.com/chojs23/homebrew-tap.git" homebrew-tap
 
       - name: Update formula
         run: |
@@ -39,7 +39,7 @@ jobs:
 
           url = os.environ["TARBALL_URL"]
           sha256 = os.environ["TARBALL_SHA256"]
-          path = pathlib.Path("homebrew-ec/Formula/ec.rb")
+          path = pathlib.Path("homebrew-tap/Formula/ec.rb")
           text = path.read_text(encoding="utf-8")
 
           updated, url_count = re.subn(r'^\s*url\s+".*"\s*$', f'  url "{url}"', text, flags=re.M)
@@ -54,7 +54,7 @@ jobs:
 
       - name: Commit formula updates
         run: |
-          cd homebrew-ec
+          cd homebrew-tap
           if git diff --quiet; then
             echo "Formula already up to date"
             exit 0

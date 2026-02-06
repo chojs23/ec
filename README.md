@@ -21,7 +21,7 @@ easy-conflict is a terminal native Git mergetool with a 3 pane IntelliJ like res
 ### Homebrew
 
 ```
-brew install chojs23/ec/ec
+brew install chojs23/tap/ec
 ```
 
 ### Go install
