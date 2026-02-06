@@ -139,12 +139,47 @@ func TestFileSelectModelView(t *testing.T) {
 	if !strings.Contains(view, "up/down: move") {
 		t.Fatalf("view = %q, want help line", view)
 	}
+	if !strings.Contains(view, "/: filter") {
+		t.Fatalf("view = %q, want filter hint", view)
+	}
 }
 
 func TestFileSelectModelInitReturnsNil(t *testing.T) {
 	model := fileSelectModel{}
 	if cmd := model.Init(); cmd != nil {
 		t.Fatalf("Init() = %v, want nil", cmd)
+	}
+}
+
+func TestFileSelectModelUpdateEnterWhileFiltering(t *testing.T) {
+	items := []list.Item{fileItem{path: "a.txt", resolved: false}}
+	model := fileSelectModel{list: list.New(items, fileItemDelegate{}, 0, 0)}
+	model.list.SetFilteringEnabled(true)
+	model.list.SetFilterState(list.Filtering)
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result := updated.(fileSelectModel)
+	if result.selected != "" {
+		t.Fatalf("selected = %q, want empty", result.selected)
+	}
+	if result.err != nil {
+		t.Fatalf("err = %v, want nil", result.err)
+	}
+}
+
+func TestFileSelectModelUpdateQuitWhileFiltering(t *testing.T) {
+	items := []list.Item{fileItem{path: "a.txt", resolved: false}}
+	model := fileSelectModel{list: list.New(items, fileItemDelegate{}, 0, 0)}
+	model.list.SetFilteringEnabled(true)
+	model.list.SetFilterState(list.Filtering)
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	result := updated.(fileSelectModel)
+	if result.err == ErrSelectorQuit {
+		t.Fatalf("err = %v, want not ErrSelectorQuit", result.err)
+	}
+	if result.list.FilterInput.Value() != "q" {
+		t.Fatalf("filter input = %q, want q", result.list.FilterInput.Value())
 	}
 }
 

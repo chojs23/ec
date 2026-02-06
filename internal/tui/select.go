@@ -101,7 +101,10 @@ func SelectFile(ctx context.Context, candidates []FileCandidate) (string, error)
 	model.list.SetShowHelp(false)
 	model.list.SetShowStatusBar(false)
 	model.list.SetShowPagination(false)
-	model.list.SetFilteringEnabled(false)
+	model.list.SetFilteringEnabled(true)
+	model.list.SetShowFilter(true)
+	model.list.FilterInput.Prompt = "Search: "
+	model.list.FilterInput.Placeholder = "type to filter"
 
 	program := selectProgram(model, ctx)
 	finalModel, err := program.Run()
@@ -130,15 +133,23 @@ func (m fileSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "ctrl+c":
 			m.err = ErrSelectorQuit
 			return m, tea.Quit
-		case "enter":
-			if item, ok := m.list.SelectedItem().(fileItem); ok {
-				m.selected = item.path
+		}
+		if !m.list.SettingFilter() {
+			switch msg.String() {
+			case "q":
+				m.err = ErrSelectorQuit
 				return m, tea.Quit
+			case "enter":
+				if item, ok := m.list.SelectedItem().(fileItem); ok {
+					m.selected = item.path
+					return m, tea.Quit
+				}
 			}
 		}
+
 	case tea.WindowSizeMsg:
 		width := msg.Width
 		height := msg.Height
@@ -154,5 +165,5 @@ func (m fileSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m fileSelectModel) View() string {
-	return m.list.View() + "\n" + "up/down: move, enter: select, q: quit"
+	return m.list.View() + "\n" + "up/down: move, /: filter, esc: clear, enter: select, q: quit"
 }
