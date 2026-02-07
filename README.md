@@ -1,12 +1,14 @@
 # ec (easy-conflict)
 
+Terminal Git merge conflict resolver with a 3 pane TUI and Neovim integration
+
 [![codecov](https://codecov.io/gh/chojs23/ec/graph/badge.svg?token=AX5BFUF8YN)](https://codecov.io/gh/chojs23/ec)
 
-<img width="1613" height="848" alt="Image" src="https://github.com/user-attachments/assets/f6903327-15c6-4fc0-9427-5bd820ba02ec" />
+<img width="1613" height="848" alt="ec 3 pane terminal merge conflict resolver" src="https://github.com/user-attachments/assets/f6903327-15c6-4fc0-9427-5bd820ba02ec" />
 
-![Demo](https://github.com/user-attachments/assets/15022303-9948-4fdd-a6e5-2f909213d6a9)
+![ec demo resolving git merge conflicts in terminal](https://github.com/user-attachments/assets/15022303-9948-4fdd-a6e5-2f909213d6a9)
 
-easy-conflict is a terminal native Git mergetool with a 3 pane IntelliJ like resolver. It focuses on conflict blocks and writes the resolved result back to the merged file.
+ec (easy-conflict) is a 3-way terminal native Git merge conflict resolver. Supports diff3 base comparison, and helps you resolve merge conflicts faster without leaving the terminal.
 
 ## Features
 
@@ -54,7 +56,7 @@ VERSION=v0.1.3 PREFIX=/usr/local ./scripts/install.sh
 make build
 ```
 
-### AUR
+### Arch Linux (AUR)
 
 - build from source
 
