@@ -58,47 +58,11 @@ jobs:
           sha256sum * > checksums.txt
           cat checksums.txt
 
-      - name: Generate release notes from CHANGELOG
-        if: ${{ !endsWith(github.ref_name, '-test') }}
-        env:
-          GITHUB_REF_NAME: ${{ github.ref_name }}
-        run: |
-          python - <<'PY'
-          import os
-          import re
-          import sys
-
-          tag = os.environ.get("GITHUB_REF_NAME", "").strip()
-          if not tag:
-            print("GITHUB_REF_NAME is not set", file=sys.stderr)
-            sys.exit(1)
-
-          with open("CHANGELOG.md", "r", encoding="utf-8") as handle:
-            text = handle.read()
-
-          pattern = re.compile(rf"^##\s+{re.escape(tag)}\s*$", re.M)
-          match = pattern.search(text)
-          if not match:
-            print(f"changelog entry not found for {tag}", file=sys.stderr)
-            sys.exit(1)
-
-          start = match.end()
-          next_header = re.search(r"^##\s+v", text[start:], re.M)
-          end = start + (next_header.start() if next_header else len(text[start:]))
-          body = text[start:end].strip()
-          if not body:
-            print(f"changelog entry for {tag} is empty", file=sys.stderr)
-            sys.exit(1)
-
-          with open("release_notes.md", "w", encoding="utf-8") as handle:
-            handle.write(body + "\n")
-          PY
-
       - name: Create Release
         if: ${{ !endsWith(github.ref_name, '-test') }}
         uses: softprops/action-gh-release@v2
         with:
-          body_path: release_notes.md
+          generate_release_notes: true
           files: |
             dist/ec-linux-amd64
             dist/ec-linux-arm64
