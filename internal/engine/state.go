@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"bytes"
 	"fmt"
 
 	"github.com/chojs23/ec/internal/markers"
@@ -137,6 +138,22 @@ func (s *State) Redo() error {
 	return nil
 }
 
+// ReplaceDocument replaces the current document as a single undoable mutation.
+// If the incoming document is identical to current state, no history is added.
+func (s *State) ReplaceDocument(doc markers.Document) {
+	if documentsEqual(s.doc, doc) {
+		return
+	}
+	s.beginMutation()
+	s.doc = cloneDocument(doc)
+}
+
+// PushUndoPoint records the current state as an undo step.
+// Useful for undoable metadata changes outside Document.
+func (s *State) PushUndoPoint() {
+	s.beginMutation()
+}
+
 // Preview generates the resolved output by concatenating segments with resolutions applied.
 // Uses markers.RenderResolved to produce the final bytes.
 // Returns error if any conflict is unresolved.
@@ -193,4 +210,41 @@ func cloneDocument(doc markers.Document) markers.Document {
 
 	copy(docCopy.Conflicts, doc.Conflicts)
 	return docCopy
+}
+
+func documentsEqual(left, right markers.Document) bool {
+	if len(left.Conflicts) != len(right.Conflicts) || len(left.Segments) != len(right.Segments) {
+		return false
+	}
+	for i := range left.Conflicts {
+		if left.Conflicts[i] != right.Conflicts[i] {
+			return false
+		}
+	}
+	for i := range left.Segments {
+		switch l := left.Segments[i].(type) {
+		case markers.TextSegment:
+			r, ok := right.Segments[i].(markers.TextSegment)
+			if !ok || !bytes.Equal(l.Bytes, r.Bytes) {
+				return false
+			}
+		case markers.ConflictSegment:
+			r, ok := right.Segments[i].(markers.ConflictSegment)
+			if !ok {
+				return false
+			}
+			if !bytes.Equal(l.Ours, r.Ours) || !bytes.Equal(l.Base, r.Base) || !bytes.Equal(l.Theirs, r.Theirs) {
+				return false
+			}
+			if l.OursLabel != r.OursLabel || l.BaseLabel != r.BaseLabel || l.TheirsLabel != r.TheirsLabel {
+				return false
+			}
+			if l.Resolution != r.Resolution {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }

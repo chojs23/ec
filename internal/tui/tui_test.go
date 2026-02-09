@@ -197,6 +197,12 @@ func TestReloadFromFilePreservesManualResolution(t *testing.T) {
 	if string(manual) != "manual\n" {
 		t.Fatalf("manual resolution = %q", string(manual))
 	}
+
+	updatedModel, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	m = updatedModel.(model)
+	if _, ok := m.manualResolved[0]; ok {
+		t.Fatalf("manual resolution should be removed after undo")
+	}
 }
 
 func TestModelInitReturnsNil(t *testing.T) {

@@ -164,6 +164,7 @@ type model struct {
 	currentConflict int
 	selectedSide    selectionSide
 	manualResolved  map[int][]byte
+	manualUndoStack []manualUndoEntry
 	pendingScroll   bool
 	keySeq          string
 	keySeqTimeout   int
@@ -180,6 +181,11 @@ type model struct {
 }
 
 type selectionSide int
+
+type manualUndoEntry struct {
+	undoDepth      int
+	manualResolved map[int][]byte
+}
 
 const (
 	selectedOurs selectionSide = iota
@@ -348,6 +354,9 @@ func (m *model) openEditor() tea.Cmd {
 }
 
 func (m *model) reloadFromFile() error {
+	prevUndoDepth := m.state.UndoDepth()
+	prevManualResolved := cloneManualResolved(m.manualResolved)
+
 	editedBytes, err := os.ReadFile(m.opts.MergedPath)
 	if err != nil {
 		return fmt.Errorf("read edited file: %w", err)
@@ -372,13 +381,16 @@ func (m *model) reloadFromFile() error {
 		return fmt.Errorf("apply merged resolutions: %w", err)
 	}
 
-	state, err := engine.NewState(updated, maxUndoSize)
-	if err != nil {
-		return fmt.Errorf("create new state: %w", err)
+	m.state.ReplaceDocument(updated)
+	docChanged := m.state.UndoDepth() > prevUndoDepth
+	manualChanged := !manualResolvedEqual(prevManualResolved, manual)
+	if !docChanged && manualChanged {
+		m.state.PushUndoPoint()
 	}
-
-	m.state = state
-	m.doc = state.Document()
+	if m.state.UndoDepth() > prevUndoDepth {
+		m.pushManualUndoEntry(prevManualResolved, m.state.UndoDepth())
+	}
+	m.doc = m.state.Document()
 	m.manualResolved = manual
 
 	if m.currentConflict >= len(m.doc.Conflicts) {
@@ -818,7 +830,11 @@ func (m *model) handleApplyNone() (tea.Cmd, error) {
 }
 
 func (m *model) handleUndo() (tea.Cmd, error) {
+	undoDepth := m.state.UndoDepth()
 	if err := m.state.Undo(); err == nil {
+		if manualResolved, ok := m.popManualUndoEntry(undoDepth); ok {
+			m.manualResolved = manualResolved
+		}
 		m.doc = m.state.Document()
 		m.updateViewports()
 	}
@@ -1272,4 +1288,51 @@ func joinLines(lines [][]byte) []byte {
 		b.Write(line)
 	}
 	return b.Bytes()
+}
+
+func cloneManualResolved(src map[int][]byte) map[int][]byte {
+	if len(src) == 0 {
+		return map[int][]byte{}
+	}
+	cloned := make(map[int][]byte, len(src))
+	for key, value := range src {
+		cloned[key] = append([]byte(nil), value...)
+	}
+	return cloned
+}
+
+func manualResolvedEqual(left map[int][]byte, right map[int][]byte) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, leftValue := range left {
+		rightValue, ok := right[key]
+		if !ok || !bytesEqual(leftValue, rightValue) {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *model) pushManualUndoEntry(manualResolved map[int][]byte, undoDepth int) {
+	m.manualUndoStack = append(m.manualUndoStack, manualUndoEntry{
+		undoDepth:      undoDepth,
+		manualResolved: manualResolved,
+	})
+	if len(m.manualUndoStack) > maxUndoSize {
+		m.manualUndoStack = m.manualUndoStack[1:]
+	}
+}
+
+func (m *model) popManualUndoEntry(undoDepth int) (map[int][]byte, bool) {
+	if len(m.manualUndoStack) == 0 {
+		return nil, false
+	}
+	lastIdx := len(m.manualUndoStack) - 1
+	entry := m.manualUndoStack[lastIdx]
+	if entry.undoDepth != undoDepth {
+		return nil, false
+	}
+	m.manualUndoStack = m.manualUndoStack[:lastIdx]
+	return cloneManualResolved(entry.manualResolved), true
 }

@@ -703,3 +703,42 @@ line2
 		t.Fatalf("UndoDepth = %d, want 1 after no-op apply all", got)
 	}
 }
+
+func TestReplaceDocumentAddsUndoStep(t *testing.T) {
+	input := []byte(`line1
+<<<<<<< HEAD
+ours
+=======
+theirs
+>>>>>>> branch
+line2
+`)
+
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	state, err := NewState(doc, 5)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+
+	edited := cloneDocument(doc)
+	editedSeg := edited.Segments[edited.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
+	editedSeg.Resolution = markers.ResolutionOurs
+	edited.Segments[edited.Conflicts[0].SegmentIndex] = editedSeg
+
+	state.ReplaceDocument(edited)
+	if got := state.UndoDepth(); got != 1 {
+		t.Fatalf("UndoDepth = %d, want 1", got)
+	}
+
+	if err := state.Undo(); err != nil {
+		t.Fatalf("Undo failed: %v", err)
+	}
+	seg := state.doc.Segments[state.doc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
+	if seg.Resolution != markers.ResolutionUnset {
+		t.Fatalf("Resolution = %q, want unset after undo", seg.Resolution)
+	}
+}
