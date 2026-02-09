@@ -6,7 +6,7 @@ Terminal Git merge conflict resolver with a 3 pane TUI and Neovim integration
 
 <img width="1613" height="848" alt="ec 3 pane terminal merge conflict resolver" src="https://github.com/user-attachments/assets/f6903327-15c6-4fc0-9427-5bd820ba02ec" />
 
-![ec demo resolving git merge conflicts in terminal](https://github.com/user-attachments/assets/15022303-9948-4fdd-a6e5-2f909213d6a9)
+![ec demo resolving git merge conflicts in terminal](https://github.com/user-attachments/assets/7c3eba19-d72b-499b-b2e8-3e16f645407e)
 
 ec (easy-conflict) is a 3-way terminal native Git merge conflict resolver. Supports diff3 base comparison, and helps you resolve merge conflicts faster without leaving the terminal.
 
