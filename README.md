@@ -26,6 +26,17 @@ ec (easy-conflict) is a 3-way terminal native Git merge conflict resolver. Suppo
 brew install chojs23/tap/ec
 ```
 
+### Install script
+
+You can run the installer through Make:
+
+```
+make install
+```
+
+- On Windows, this runs `scripts/install.ps1`.
+- On Linux/macOS, this runs `scripts/install.sh`.
+
 ### Go install
 
 ```
@@ -34,40 +45,43 @@ go install github.com/chojs23/ec/cmd/ec@latest
 
 ### Via curl
 
-```
+```bash
 curl -fsSL https://raw.githubusercontent.com/chojs23/ec/main/scripts/install.sh | sh
-```
-
-### Install script
-
-Downloads the GitHub release binary. VERSION is optional and defaults to latest.
-
-```
-./scripts/install.sh
-```
-
-```
-VERSION=v0.1.3 PREFIX=/usr/local ./scripts/install.sh
-```
-
-### Build from source
-
-```
-make build
 ```
 
 ### Arch Linux (AUR)
 
-- build from source
+build from source:
 
 ```
 pikaur -S easy-conflict
 ```
 
-- binary
+binary:
 
 ```
 pikaur -S easy-conflict-bin
+```
+
+### Windows
+
+Download a Windows binary from GitHub Releases and add it to your `PATH`.
+
+PowerShell installer (default: latest release, install to `$HOME\\.local\\bin`):
+
+```powershell
+irm https://raw.githubusercontent.com/chojs23/ec/main/scripts/install.ps1 | iex
+```
+
+Available release artifacts:
+
+- `ec-windows-amd64.exe`
+- `ec-windows-arm64.exe`
+
+### Build from source
+
+```
+make build
 ```
 
 ## Quick start

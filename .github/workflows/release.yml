@@ -52,6 +52,12 @@ jobs:
           # Build for macOS arm64 (Apple Silicon)
           GOOS=darwin GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/ec-darwin-arm64 ./cmd/ec
 
+          # Build for Windows amd64
+          GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/ec-windows-amd64.exe ./cmd/ec
+
+          # Build for Windows arm64
+          GOOS=windows GOARCH=arm64 go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/ec-windows-arm64.exe ./cmd/ec
+
       - name: Generate checksums
         run: |
           cd dist
@@ -68,6 +74,8 @@ jobs:
             dist/ec-linux-arm64
             dist/ec-darwin-amd64
             dist/ec-darwin-arm64
+            dist/ec-windows-amd64.exe
+            dist/ec-windows-arm64.exe
             dist/checksums.txt
           draft: false
           prerelease: false

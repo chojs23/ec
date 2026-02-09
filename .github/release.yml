@@ -29,3 +29,6 @@ changelog:
         - docs
         - refactor
         - test
+    - title: Other Changes
+      labels:
+        - "*"
