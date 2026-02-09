@@ -34,6 +34,10 @@ const (
 	keyScrollRight        = "L"
 	keyScrollDown         = "j"
 	keyScrollUp           = "k"
+	keyArrowLeft          = "left"
+	keyArrowRight         = "right"
+	keyArrowDown          = "down"
+	keyArrowUp            = "up"
 	keyGoTop              = "g"
 	keyGoBottom           = "G"
 	keyApplyOurs          = "o"
@@ -61,8 +65,8 @@ var resolverKeyHelp = []keyHelpEntry{
 	{key: "n", description: "next"},
 	{key: "p", description: "prev"},
 	{key: "gg/G", description: "top/bottom"},
-	{key: "j/k", description: "scroll"},
-	{key: "H/L", description: "scroll"},
+	{key: "j/k/up/down", description: "scroll"},
+	{key: "H/L/left/right", description: "scroll"},
 	{key: "h", description: "ours"},
 	{key: "l", description: "theirs"},
 	{key: "a/<space>", description: "accept"},
@@ -89,6 +93,10 @@ var resolverKeyActions = map[string]keyAction{
 	keyScrollRight:    (*model).handleScrollRight,
 	keyScrollDown:     (*model).handleScrollDown,
 	keyScrollUp:       (*model).handleScrollUp,
+	keyArrowLeft:      (*model).handleScrollLeft,
+	keyArrowRight:     (*model).handleScrollRight,
+	keyArrowDown:      (*model).handleScrollDown,
+	keyArrowUp:        (*model).handleScrollUp,
 	keyApplyOurs:      (*model).handleApplyOurs,
 	keyApplyTheirs:    (*model).handleApplyTheirs,
 	keyApplyOursAll:   (*model).handleApplyOursAll,

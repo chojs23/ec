@@ -511,6 +511,18 @@ func TestUpdateScrollHorizontalKeys(t *testing.T) {
 	if got := result.viewportOurs.View(); got != "01234" {
 		t.Fatalf("View = %q, want 01234 after H", got)
 	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRight})
+	result = updated.(model)
+	if got := result.viewportOurs.View(); got != "45678" {
+		t.Fatalf("View = %q, want 45678 after right", got)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	result = updated.(model)
+	if got := result.viewportOurs.View(); got != "01234" {
+		t.Fatalf("View = %q, want 01234 after left", got)
+	}
 }
 
 func TestUpdateKeySeqScroll(t *testing.T) {
@@ -596,6 +608,18 @@ func TestUpdateVerticalScrollKeys(t *testing.T) {
 	result = updated.(model)
 	if result.viewportOurs.YOffset != 0 {
 		t.Fatalf("YOffset = %d, want 0 after k", result.viewportOurs.YOffset)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyDown})
+	result = updated.(model)
+	if result.viewportOurs.YOffset != 1 {
+		t.Fatalf("YOffset = %d, want 1 after down", result.viewportOurs.YOffset)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyUp})
+	result = updated.(model)
+	if result.viewportOurs.YOffset != 0 {
+		t.Fatalf("YOffset = %d, want 0 after up", result.viewportOurs.YOffset)
 	}
 }
 
