@@ -123,6 +123,57 @@ func TestOpenEditorWithUnresolvedConflicts(t *testing.T) {
 	}
 }
 
+func TestOpenEditorUsesManualResolvedPreview(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+	conflicted := []byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n")
+	if err := os.WriteFile(mergedPath, conflicted, 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	doc, err := markers.Parse(conflicted)
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+
+	state, err := engine.NewState(doc, 10)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+
+	editorPath := filepath.Join(tmpDir, "editor.sh")
+	if err := os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("WriteFile editor error = %v", err)
+	}
+
+	originalEditor := os.Getenv("EDITOR")
+	if err := os.Setenv("EDITOR", editorPath); err != nil {
+		t.Fatalf("Setenv error = %v", err)
+	}
+	defer os.Setenv("EDITOR", originalEditor)
+
+	m := model{
+		state:          state,
+		doc:            doc,
+		manualResolved: map[int][]byte{0: []byte("manual\n")},
+		opts:           cliOptionsWithMergedPath(mergedPath),
+	}
+
+	msg := m.openEditor()()
+	if !strings.Contains(fmt.Sprintf("%T", msg), "execMsg") {
+		t.Fatalf("unexpected msg type %T", msg)
+	}
+
+	data, err := os.ReadFile(mergedPath)
+	if err != nil {
+		t.Fatalf("ReadFile error = %v", err)
+	}
+	if string(data) != "line1\nmanual\nline2\n" {
+		t.Fatalf("merged content = %q, want %q", string(data), "line1\\nmanual\\nline2\\n")
+	}
+}
+
 func TestReloadFromFilePreservesManualResolution(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration-style test in short mode")
@@ -202,6 +253,109 @@ func TestReloadFromFilePreservesManualResolution(t *testing.T) {
 	m = updatedModel.(model)
 	if _, ok := m.manualResolved[0]; ok {
 		t.Fatalf("manual resolution should be removed after undo")
+	}
+
+	updatedModel, _ = m.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
+	m = updatedModel.(model)
+	manual, ok = m.manualResolved[0]
+	if !ok {
+		t.Fatalf("expected manual resolution for conflict 0 after redo")
+	}
+	if string(manual) != "manual\n" {
+		t.Fatalf("manual resolution after redo = %q", string(manual))
+	}
+}
+
+func TestReloadFromFileKeepsExistingUndoHistory(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	baseContent := "line1\nbase\nline3\n"
+	localContent := "line1\nlocal\nline3\n"
+	remoteContent := "line1\nremote\nline3\n"
+	mergedContent := "line1\nlocal\nline3\n"
+
+	if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte(localContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remotePath, []byte(remoteContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mergedPath, []byte(mergedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	}
+
+	diff3Bytes, err := gitmerge.MergeFileDiff3(ctx, opts.LocalPath, opts.BasePath, opts.RemotePath)
+	if err != nil {
+		t.Fatalf("MergeFileDiff3 failed: %v", err)
+	}
+
+	doc, err := markers.Parse(diff3Bytes)
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+
+	state, err := engine.NewState(doc, 10)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+
+	m := model{
+		ctx:   ctx,
+		opts:  opts,
+		state: state,
+		doc:   doc,
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
+	m = updated.(model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	m = updated.(model)
+
+	if got := m.undoDepth(); got != 1 {
+		t.Fatalf("undo depth before manual reload = %d, want 1", got)
+	}
+	if got := m.redoDepth(); got != 1 {
+		t.Fatalf("redo depth before manual reload = %d, want 1", got)
+	}
+
+	if err := os.WriteFile(mergedPath, []byte("line1\nmanual\nline3\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := m.reloadFromFile(); err != nil {
+		t.Fatalf("reloadFromFile error = %v", err)
+	}
+
+	if got := m.undoDepth(); got != 2 {
+		t.Fatalf("undo depth after manual reload = %d, want 2", got)
+	}
+	if got := m.redoDepth(); got != 0 {
+		t.Fatalf("redo depth after manual reload = %d, want 0", got)
 	}
 }
 
@@ -442,13 +596,13 @@ func TestUpdateAcceptNoOpDoesNotGrowUndo(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	result := updated.(model)
-	if got := result.state.UndoDepth(); got != 1 {
+	if got := result.undoDepth(); got != 1 {
 		t.Fatalf("UndoDepth = %d, want 1", got)
 	}
 
 	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	result = updated.(model)
-	if got := result.state.UndoDepth(); got != 1 {
+	if got := result.undoDepth(); got != 1 {
 		t.Fatalf("UndoDepth = %d, want 1 after repeated accept", got)
 	}
 }
