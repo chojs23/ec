@@ -229,7 +229,7 @@ Keybindings are vim-like by default.
 
 - u: undo
 - e: open $EDITOR with current result
-- w: write file without quitting
+- w / ctrl+s: write file without quitting
 - q: back to selector or quit
 
 ## Theme configuration
