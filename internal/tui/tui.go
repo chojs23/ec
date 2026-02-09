@@ -50,6 +50,7 @@ const (
 	keyApplyBoth          = "b"
 	keyApplyNone          = "x"
 	keyUndo               = "u"
+	keyRedo               = "ctrl+r"
 	keyWrite              = "w"
 	keyEdit               = "e"
 )
@@ -75,8 +76,8 @@ var resolverKeyHelp = []keyHelpEntry{
 	{key: "b", description: "both"},
 	{key: "x", description: "none"},
 	{key: "d", description: "discard"},
-	{key: "T", description: "theirs all"},
 	{key: "u", description: "undo"},
+	{key: "ctrl+r", description: "redo"},
 	{key: "e", description: "editor"},
 	{key: "w/ctrl+s", description: "write"},
 	{key: "q", description: "back to selector"},
@@ -107,6 +108,7 @@ var resolverKeyActions = map[string]keyAction{
 	keyApplyBoth:      (*model).handleApplyBoth,
 	keyApplyNone:      (*model).handleApplyNone,
 	keyUndo:           (*model).handleUndo,
+	keyRedo:           (*model).handleRedo,
 	keyWrite:          (*model).handleWrite,
 	keyCtrlS:          (*model).handleWrite,
 	keyEdit:           (*model).handleEdit,
@@ -162,6 +164,8 @@ type model struct {
 	currentConflict int
 	selectedSide    selectionSide
 	manualResolved  map[int][]byte
+	resolverUndo    []resolverSnapshot
+	resolverRedo    []resolverSnapshot
 	pendingScroll   bool
 	keySeq          string
 	keySeqTimeout   int
@@ -178,6 +182,11 @@ type model struct {
 }
 
 type selectionSide int
+
+type resolverSnapshot struct {
+	doc            markers.Document
+	manualResolved map[int][]byte
+}
 
 const (
 	selectedOurs selectionSide = iota
@@ -299,19 +308,10 @@ func (m *model) openEditor() tea.Cmd {
 		}
 	}
 
-	resolved, err := m.state.Preview()
+	resolved, _, err := renderMergedOutput(m.state.Document(), m.manualResolved)
 	if err != nil {
-		if errors.Is(err, markers.ErrUnresolved) {
-			resolved, err = markers.RenderWithUnresolved(m.state.Document())
-			if err != nil {
-				return func() tea.Msg {
-					return editorFinishedMsg{err: fmt.Errorf("render unresolved preview for editor: %w", err)}
-				}
-			}
-		} else {
-			return func() tea.Msg {
-				return editorFinishedMsg{err: fmt.Errorf("cannot generate preview for editor: %w", err)}
-			}
+		return func() tea.Msg {
+			return editorFinishedMsg{err: fmt.Errorf("cannot generate preview for editor: %w", err)}
 		}
 	}
 
@@ -370,25 +370,19 @@ func (m *model) reloadFromFile() error {
 		return fmt.Errorf("apply merged resolutions: %w", err)
 	}
 
-	state, err := engine.NewState(updated, maxUndoSize)
-	if err != nil {
-		return fmt.Errorf("create new state: %w", err)
-	}
+	return m.applyResolverMutation(func() error {
+		m.state.ReplaceDocument(updated)
+		m.doc = m.state.Document()
+		m.manualResolved = manual
 
-	m.state = state
-	m.doc = state.Document()
-	m.manualResolved = manual
-
-	if m.currentConflict >= len(m.doc.Conflicts) {
-		m.currentConflict = len(m.doc.Conflicts) - 1
-	}
-	if m.currentConflict < 0 {
-		m.currentConflict = 0
-	}
-
-	m.updateViewports()
-
-	return nil
+		if m.currentConflict >= len(m.doc.Conflicts) {
+			m.currentConflict = len(m.doc.Conflicts) - 1
+		}
+		if m.currentConflict < 0 {
+			m.currentConflict = 0
+		}
+		return nil
+	})
 }
 
 func prepareFullDiff(doc markers.Document, opts cli.Options) ([]string, []string, []string, []conflictRange, bool) {
@@ -632,12 +626,16 @@ func (m model) View() string {
 
 	// Footer
 	undoInfo := ""
-	if m.state.UndoDepth() > 0 {
-		undoInfo = fmt.Sprintf(" | Undo available: %d", m.state.UndoDepth())
+	if m.undoDepth() > 0 {
+		undoInfo = fmt.Sprintf(" | Undo available: %d", m.undoDepth())
+	}
+	redoInfo := ""
+	if m.redoDepth() > 0 {
+		redoInfo = fmt.Sprintf(" | Redo available: %d", m.redoDepth())
 	}
 
 	footerText := footerStyle.Width(m.width).Render(
-		fmt.Sprintf("%s%s", resolverFooterKeyMapText(), undoInfo),
+		fmt.Sprintf("%s%s%s", resolverFooterKeyMapText(), undoInfo, redoInfo),
 	)
 	footer := lipgloss.JoinVertical(lipgloss.Left, footerText, m.renderToastLine())
 
@@ -665,33 +663,36 @@ func (m *model) applySelectedSide() error {
 	if m.selectedSide == selectedTheirs {
 		resolution = markers.ResolutionTheirs
 	}
-	if err := m.state.ApplyResolution(m.currentConflict, resolution); err != nil {
-		return err
-	}
-	delete(m.manualResolved, m.currentConflict)
-	m.doc = m.state.Document()
-	m.updateViewports()
-	return nil
+	return m.applyResolverMutation(func() error {
+		if err := m.state.ApplyResolution(m.currentConflict, resolution); err != nil {
+			return err
+		}
+		delete(m.manualResolved, m.currentConflict)
+		m.doc = m.state.Document()
+		return nil
+	})
 }
 
 func (m *model) applyResolution(resolution markers.Resolution) error {
-	if err := m.state.ApplyResolution(m.currentConflict, resolution); err != nil {
-		return err
-	}
-	delete(m.manualResolved, m.currentConflict)
-	m.doc = m.state.Document()
-	m.updateViewports()
-	return nil
+	return m.applyResolverMutation(func() error {
+		if err := m.state.ApplyResolution(m.currentConflict, resolution); err != nil {
+			return err
+		}
+		delete(m.manualResolved, m.currentConflict)
+		m.doc = m.state.Document()
+		return nil
+	})
 }
 
 func (m *model) applyAll(resolution markers.Resolution) error {
-	if err := m.state.ApplyAll(resolution); err != nil {
-		return err
-	}
-	m.manualResolved = map[int][]byte{}
-	m.doc = m.state.Document()
-	m.updateViewports()
-	return nil
+	return m.applyResolverMutation(func() error {
+		if err := m.state.ApplyAll(resolution); err != nil {
+			return err
+		}
+		m.manualResolved = map[int][]byte{}
+		m.doc = m.state.Document()
+		return nil
+	})
 }
 
 func (m *model) handleQuit() (tea.Cmd, error) {
@@ -812,10 +813,28 @@ func (m *model) handleApplyNone() (tea.Cmd, error) {
 }
 
 func (m *model) handleUndo() (tea.Cmd, error) {
-	if err := m.state.Undo(); err == nil {
-		m.doc = m.state.Document()
-		m.updateViewports()
+	if m.undoDepth() == 0 {
+		return nil, nil
 	}
+	current := m.captureResolverSnapshot()
+	snapshot := m.resolverUndo[len(m.resolverUndo)-1]
+	m.resolverUndo = m.resolverUndo[:len(m.resolverUndo)-1]
+	m.resolverRedo = append(m.resolverRedo, current)
+	m.restoreResolverSnapshot(snapshot)
+	m.updateViewports()
+	return nil, nil
+}
+
+func (m *model) handleRedo() (tea.Cmd, error) {
+	if m.redoDepth() == 0 {
+		return nil, nil
+	}
+	current := m.captureResolverSnapshot()
+	snapshot := m.resolverRedo[len(m.resolverRedo)-1]
+	m.resolverRedo = m.resolverRedo[:len(m.resolverRedo)-1]
+	m.resolverUndo = append(m.resolverUndo, current)
+	m.restoreResolverSnapshot(snapshot)
+	m.updateViewports()
 	return nil, nil
 }
 
@@ -985,19 +1004,9 @@ func (m *model) scrollVertical(delta int) {
 }
 
 func (m *model) writeResolved() error {
-	// Generate preview
-	resolved, err := m.state.Preview()
-	allowUnresolved := false
+	resolved, allowUnresolved, err := renderMergedOutput(m.state.Document(), m.manualResolved)
 	if err != nil {
-		if errors.Is(err, markers.ErrUnresolved) {
-			allowUnresolved = true
-			resolved, err = markers.RenderWithUnresolved(m.state.Document())
-			if err != nil {
-				return fmt.Errorf("render unresolved output: %w", err)
-			}
-		} else {
-			return fmt.Errorf("cannot write: %w", err)
-		}
+		return fmt.Errorf("cannot write: %w", err)
 	}
 
 	// Read original merged file for backup
@@ -1047,6 +1056,60 @@ func allResolved(doc markers.Document, manualResolved map[int][]byte) bool {
 		}
 	}
 	return true
+}
+
+func renderMergedOutput(doc markers.Document, manualResolved map[int][]byte) ([]byte, bool, error) {
+	var out bytes.Buffer
+	hasUnresolved := false
+	conflictIndex := -1
+
+	writeMarker := func(prefix string, label string) {
+		out.WriteString(prefix)
+		if label != "" {
+			out.WriteByte(' ')
+			out.WriteString(label)
+		}
+		out.WriteByte('\n')
+	}
+
+	for _, seg := range doc.Segments {
+		switch s := seg.(type) {
+		case markers.TextSegment:
+			out.Write(s.Bytes)
+		case markers.ConflictSegment:
+			conflictIndex++
+			if manualBytes, ok := manualResolved[conflictIndex]; ok {
+				out.Write(manualBytes)
+				continue
+			}
+			switch s.Resolution {
+			case markers.ResolutionOurs:
+				out.Write(s.Ours)
+			case markers.ResolutionTheirs:
+				out.Write(s.Theirs)
+			case markers.ResolutionBoth:
+				out.Write(s.Ours)
+				out.Write(s.Theirs)
+			case markers.ResolutionNone:
+				// Write nothing for this conflict.
+			default:
+				hasUnresolved = true
+				writeMarker("<<<<<<<", s.OursLabel)
+				out.Write(s.Ours)
+				if len(s.Base) > 0 || s.BaseLabel != "" {
+					writeMarker("|||||||", s.BaseLabel)
+					out.Write(s.Base)
+				}
+				writeMarker("=======", "")
+				out.Write(s.Theirs)
+				writeMarker(">>>>>>>", s.TheirsLabel)
+			}
+		default:
+			return nil, false, fmt.Errorf("unknown segment type %T", seg)
+		}
+	}
+
+	return out.Bytes(), hasUnresolved, nil
 }
 
 func formatLabel(label string) string {
@@ -1258,4 +1321,128 @@ func joinLines(lines [][]byte) []byte {
 		b.Write(line)
 	}
 	return b.Bytes()
+}
+
+func cloneManualResolved(src map[int][]byte) map[int][]byte {
+	if len(src) == 0 {
+		return map[int][]byte{}
+	}
+	cloned := make(map[int][]byte, len(src))
+	for key, value := range src {
+		cloned[key] = append([]byte(nil), value...)
+	}
+	return cloned
+}
+
+func manualResolvedEqual(left map[int][]byte, right map[int][]byte) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, leftValue := range left {
+		rightValue, ok := right[key]
+		if !ok || !bytesEqual(leftValue, rightValue) {
+			return false
+		}
+	}
+	return true
+}
+
+func resolverDocumentsEqual(left, right markers.Document) bool {
+	if len(left.Conflicts) != len(right.Conflicts) || len(left.Segments) != len(right.Segments) {
+		return false
+	}
+	for i := range left.Conflicts {
+		if left.Conflicts[i] != right.Conflicts[i] {
+			return false
+		}
+	}
+	for i := range left.Segments {
+		switch l := left.Segments[i].(type) {
+		case markers.TextSegment:
+			r, ok := right.Segments[i].(markers.TextSegment)
+			if !ok || !bytesEqual(l.Bytes, r.Bytes) {
+				return false
+			}
+		case markers.ConflictSegment:
+			r, ok := right.Segments[i].(markers.ConflictSegment)
+			if !ok {
+				return false
+			}
+			if !bytesEqual(l.Ours, r.Ours) || !bytesEqual(l.Base, r.Base) || !bytesEqual(l.Theirs, r.Theirs) {
+				return false
+			}
+			if l.OursLabel != r.OursLabel || l.BaseLabel != r.BaseLabel || l.TheirsLabel != r.TheirsLabel {
+				return false
+			}
+			if l.Resolution != r.Resolution {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func resolverSnapshotsEqual(left resolverSnapshot, right resolverSnapshot) bool {
+	return resolverDocumentsEqual(left.doc, right.doc) && manualResolvedEqual(left.manualResolved, right.manualResolved)
+}
+
+func cloneResolverDocument(doc markers.Document) markers.Document {
+	cloned := markers.Document{
+		Segments:  make([]markers.Segment, len(doc.Segments)),
+		Conflicts: make([]markers.ConflictRef, len(doc.Conflicts)),
+	}
+	for i, seg := range doc.Segments {
+		switch v := seg.(type) {
+		case markers.TextSegment:
+			cloned.Segments[i] = v
+		case markers.ConflictSegment:
+			cloned.Segments[i] = v
+		}
+	}
+	copy(cloned.Conflicts, doc.Conflicts)
+	return cloned
+}
+
+func (m *model) captureResolverSnapshot() resolverSnapshot {
+	return resolverSnapshot{
+		doc:            cloneResolverDocument(m.state.Document()),
+		manualResolved: cloneManualResolved(m.manualResolved),
+	}
+}
+
+func (m *model) restoreResolverSnapshot(snapshot resolverSnapshot) {
+	m.state.ReplaceDocument(snapshot.doc)
+	m.doc = m.state.Document()
+	m.manualResolved = cloneManualResolved(snapshot.manualResolved)
+}
+
+func (m *model) pushResolverUndo(snapshot resolverSnapshot) {
+	m.resolverUndo = append(m.resolverUndo, snapshot)
+	if len(m.resolverUndo) > maxUndoSize {
+		m.resolverUndo = m.resolverUndo[1:]
+	}
+}
+
+func (m *model) applyResolverMutation(mutator func() error) error {
+	before := m.captureResolverSnapshot()
+	if err := mutator(); err != nil {
+		return err
+	}
+	after := m.captureResolverSnapshot()
+	if !resolverSnapshotsEqual(before, after) {
+		m.pushResolverUndo(before)
+		m.resolverRedo = nil
+	}
+	m.updateViewports()
+	return nil
+}
+
+func (m model) undoDepth() int {
+	return len(m.resolverUndo)
+}
+
+func (m model) redoDepth() int {
+	return len(m.resolverRedo)
 }

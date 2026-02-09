@@ -258,6 +258,65 @@ line2
 	})
 }
 
+func TestRedo(t *testing.T) {
+	input := []byte(`line1
+<<<<<<< HEAD
+ours
+=======
+theirs
+>>>>>>> branch
+line2
+`)
+
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	state, err := NewState(doc, 10)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+
+	t.Run("no redo history initially", func(t *testing.T) {
+		err := state.Redo()
+		if err == nil {
+			t.Error("expected error when no redo history")
+		}
+	})
+
+	t.Run("redo after undo", func(t *testing.T) {
+		if err := state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
+			t.Fatalf("ApplyResolution failed: %v", err)
+		}
+		if err := state.Undo(); err != nil {
+			t.Fatalf("Undo failed: %v", err)
+		}
+
+		if err := state.Redo(); err != nil {
+			t.Fatalf("Redo failed: %v", err)
+		}
+
+		seg := state.doc.Segments[state.doc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
+		if seg.Resolution != markers.ResolutionOurs {
+			t.Errorf("expected ours after redo, got %q", seg.Resolution)
+		}
+	})
+
+	t.Run("new mutation clears redo history", func(t *testing.T) {
+		if err := state.Undo(); err != nil {
+			t.Fatalf("Undo failed: %v", err)
+		}
+		if err := state.ApplyResolution(0, markers.ResolutionTheirs); err != nil {
+			t.Fatalf("ApplyResolution failed: %v", err)
+		}
+
+		if err := state.Redo(); err == nil {
+			t.Error("expected redo error after new mutation")
+		}
+	})
+}
+
 func TestUndoStackLimit(t *testing.T) {
 	input := []byte(`line1
 <<<<<<< HEAD
@@ -561,6 +620,9 @@ line2
 	if state.UndoDepth() != 0 {
 		t.Errorf("initial undo depth should be 0, got %d", state.UndoDepth())
 	}
+	if state.RedoDepth() != 0 {
+		t.Errorf("initial redo depth should be 0, got %d", state.RedoDepth())
+	}
 
 	if err := state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
 		t.Fatalf("ApplyResolution failed: %v", err)
@@ -584,5 +646,99 @@ line2
 
 	if state.UndoDepth() != 1 {
 		t.Errorf("undo depth after 1 undo should be 1, got %d", state.UndoDepth())
+	}
+	if state.RedoDepth() != 1 {
+		t.Errorf("redo depth after 1 undo should be 1, got %d", state.RedoDepth())
+	}
+
+	if err := state.Redo(); err != nil {
+		t.Fatalf("Redo failed: %v", err)
+	}
+	if state.UndoDepth() != 2 {
+		t.Errorf("undo depth after redo should be 2, got %d", state.UndoDepth())
+	}
+	if state.RedoDepth() != 0 {
+		t.Errorf("redo depth after redo should be 0, got %d", state.RedoDepth())
+	}
+}
+
+func TestNoOpApplyDoesNotGrowUndo(t *testing.T) {
+	input := []byte(`line1
+<<<<<<< HEAD
+ours
+=======
+theirs
+>>>>>>> branch
+line2
+`)
+
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	state, err := NewState(doc, 5)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+
+	if err := state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
+		t.Fatalf("ApplyResolution failed: %v", err)
+	}
+	if got := state.UndoDepth(); got != 1 {
+		t.Fatalf("UndoDepth = %d, want 1", got)
+	}
+
+	if err := state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
+		t.Fatalf("ApplyResolution no-op failed: %v", err)
+	}
+	if got := state.UndoDepth(); got != 1 {
+		t.Fatalf("UndoDepth = %d, want 1 after no-op apply", got)
+	}
+
+	if err := state.ApplyAll(markers.ResolutionOurs); err != nil {
+		t.Fatalf("ApplyAll no-op failed: %v", err)
+	}
+	if got := state.UndoDepth(); got != 1 {
+		t.Fatalf("UndoDepth = %d, want 1 after no-op apply all", got)
+	}
+}
+
+func TestReplaceDocumentAddsUndoStep(t *testing.T) {
+	input := []byte(`line1
+<<<<<<< HEAD
+ours
+=======
+theirs
+>>>>>>> branch
+line2
+`)
+
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	state, err := NewState(doc, 5)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+
+	edited := cloneDocument(doc)
+	editedSeg := edited.Segments[edited.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
+	editedSeg.Resolution = markers.ResolutionOurs
+	edited.Segments[edited.Conflicts[0].SegmentIndex] = editedSeg
+
+	state.ReplaceDocument(edited)
+	if got := state.UndoDepth(); got != 1 {
+		t.Fatalf("UndoDepth = %d, want 1", got)
+	}
+
+	if err := state.Undo(); err != nil {
+		t.Fatalf("Undo failed: %v", err)
+	}
+	seg := state.doc.Segments[state.doc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
+	if seg.Resolution != markers.ResolutionUnset {
+		t.Fatalf("Resolution = %q, want unset after undo", seg.Resolution)
 	}
 }
