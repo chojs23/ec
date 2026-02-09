@@ -424,6 +424,22 @@ func TestUpdateAcceptSelection(t *testing.T) {
 	}
 }
 
+func TestUpdateAcceptSelectionWithSpace(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	m := newModelForDoc(t, doc)
+	m.selectedSide = selectedTheirs
+	m.manualResolved = map[int][]byte{0: []byte("manual\n")}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	result := updated.(model)
+	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionTheirs {
+		t.Fatalf("resolution = %q, want theirs", got)
+	}
+	if len(result.manualResolved) != 0 {
+		t.Fatalf("manualResolved len = %d, want 0", len(result.manualResolved))
+	}
+}
+
 func TestUpdateApplyTheirs(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
 	m := newModelForDoc(t, doc)
@@ -495,6 +511,18 @@ func TestUpdateScrollHorizontalKeys(t *testing.T) {
 	if got := result.viewportOurs.View(); got != "01234" {
 		t.Fatalf("View = %q, want 01234 after H", got)
 	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRight})
+	result = updated.(model)
+	if got := result.viewportOurs.View(); got != "45678" {
+		t.Fatalf("View = %q, want 45678 after right", got)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyLeft})
+	result = updated.(model)
+	if got := result.viewportOurs.View(); got != "01234" {
+		t.Fatalf("View = %q, want 01234 after left", got)
+	}
 }
 
 func TestUpdateKeySeqScroll(t *testing.T) {
@@ -531,6 +559,67 @@ func TestUpdateKeySeqScroll(t *testing.T) {
 	result = updated.(model)
 	if result.viewportOurs.YOffset != 7 {
 		t.Fatalf("YOffset = %d, want 7 after G", result.viewportOurs.YOffset)
+	}
+}
+
+func TestUpdateIgnoresUnmappedViewportKeys(t *testing.T) {
+	lines := strings.Join([]string{"one", "two", "three", "four", "five", "six"}, "\n")
+	m := model{
+		viewportOurs:   viewport.New(5, 3),
+		viewportResult: viewport.New(5, 3),
+		viewportTheirs: viewport.New(5, 3),
+	}
+	for _, viewportModel := range []*viewport.Model{&m.viewportOurs, &m.viewportResult, &m.viewportTheirs} {
+		viewportModel.SetContent(lines)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	result := updated.(model)
+
+	if result.viewportOurs.YOffset != 0 {
+		t.Fatalf("YOffset = %d, want 0 after unmapped key", result.viewportOurs.YOffset)
+	}
+	if result.viewportResult.YOffset != 0 {
+		t.Fatalf("result YOffset = %d, want 0 after unmapped key", result.viewportResult.YOffset)
+	}
+	if result.viewportTheirs.YOffset != 0 {
+		t.Fatalf("theirs YOffset = %d, want 0 after unmapped key", result.viewportTheirs.YOffset)
+	}
+}
+
+func TestUpdateVerticalScrollKeys(t *testing.T) {
+	lines := strings.Join([]string{"one", "two", "three", "four", "five", "six"}, "\n")
+	m := model{
+		viewportOurs:   viewport.New(5, 3),
+		viewportResult: viewport.New(5, 3),
+		viewportTheirs: viewport.New(5, 3),
+	}
+	for _, viewportModel := range []*viewport.Model{&m.viewportOurs, &m.viewportResult, &m.viewportTheirs} {
+		viewportModel.SetContent(lines)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	result := updated.(model)
+	if result.viewportOurs.YOffset != 1 {
+		t.Fatalf("YOffset = %d, want 1 after j", result.viewportOurs.YOffset)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'k'}})
+	result = updated.(model)
+	if result.viewportOurs.YOffset != 0 {
+		t.Fatalf("YOffset = %d, want 0 after k", result.viewportOurs.YOffset)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyDown})
+	result = updated.(model)
+	if result.viewportOurs.YOffset != 1 {
+		t.Fatalf("YOffset = %d, want 1 after down", result.viewportOurs.YOffset)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyUp})
+	result = updated.(model)
+	if result.viewportOurs.YOffset != 0 {
+		t.Fatalf("YOffset = %d, want 0 after up", result.viewportOurs.YOffset)
 	}
 }
 

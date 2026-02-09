@@ -213,22 +213,23 @@ Keybindings are vim-like by default.
 ### Navigation
 
 - n / p: next and previous conflict
-- j / k: vertical scroll
-- H / L: horizontal scroll
+- gg / G: jump to top / bottom
+- j / k / up / down: vertical scroll
+- H / L / left / right: horizontal scroll
 
 ### Selection and apply
 
 - h / l: select ours or theirs
-- a: accept selection
+- a / space: accept selection
+- o / t / b / x: apply ours, theirs, both, or none
 - d: discard selection
-- o, t, b, x: apply ours, theirs, both, or none
-- O and T: apply ours or theirs to all
+- O / T: apply ours or theirs to all
 
 ### Other
 
 - u: undo
 - e: open $EDITOR with current result
-- w: write file without quitting
+- w / ctrl+s: write file without quitting
 - q: back to selector or quit
 
 ## Theme configuration
