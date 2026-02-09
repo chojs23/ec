@@ -55,6 +55,8 @@ type keyHelpEntry struct {
 	description string
 }
 
+type keyAction func(*model) (tea.Cmd, error)
+
 var resolverKeyHelp = []keyHelpEntry{
 	{key: "n", description: "next"},
 	{key: "p", description: "prev"},
@@ -74,6 +76,32 @@ var resolverKeyHelp = []keyHelpEntry{
 	{key: "e", description: "editor"},
 	{key: "w/ctrl+s", description: "write"},
 	{key: "q", description: "back to selector"},
+}
+
+var resolverKeyActions = map[string]keyAction{
+	keyQuit:           (*model).handleQuit,
+	keyCtrlC:          (*model).handleCtrlC,
+	keyNextConflict:   (*model).handleNextConflict,
+	keyPrevConflict:   (*model).handlePrevConflict,
+	keySelectOurs:     (*model).handleSelectOurs,
+	keySelectTheirs:   (*model).handleSelectTheirs,
+	keyScrollLeft:     (*model).handleScrollLeft,
+	keyScrollRight:    (*model).handleScrollRight,
+	keyScrollDown:     (*model).handleScrollDown,
+	keyScrollUp:       (*model).handleScrollUp,
+	keyApplyOurs:      (*model).handleApplyOurs,
+	keyApplyTheirs:    (*model).handleApplyTheirs,
+	keyApplyOursAll:   (*model).handleApplyOursAll,
+	keyApplyTheirsAll: (*model).handleApplyTheirsAll,
+	keyAccept:         (*model).handleAccept,
+	keyAcceptSpace:    (*model).handleAccept,
+	keyDiscard:        (*model).handleDiscard,
+	keyApplyBoth:      (*model).handleApplyBoth,
+	keyApplyNone:      (*model).handleApplyNone,
+	keyUndo:           (*model).handleUndo,
+	keyWrite:          (*model).handleWrite,
+	keyCtrlS:          (*model).handleWrite,
+	keyEdit:           (*model).handleEdit,
 }
 
 var (
@@ -447,147 +475,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.keySeq != "" {
 			m.keySeq = ""
 		}
-		switch key {
-		case keyQuit:
-			m.err = ErrBackToSelector
-			m.quitting = true
-			return m, tea.Quit
-
-		case keyCtrlC:
-			m.quitting = true
-			return m, tea.Quit
-
-		case keyNextConflict:
-			// Next conflict
-			if m.currentConflict < len(m.doc.Conflicts)-1 {
-				m.currentConflict++
-				m.pendingScroll = true
-				m.updateViewports()
-			}
-
-		case keyPrevConflict:
-			// Previous conflict
-			if m.currentConflict > 0 {
-				m.currentConflict--
-				m.pendingScroll = true
-				m.updateViewports()
-			}
-
-		case keySelectOurs:
-			m.selectedSide = selectedOurs
-			m.updateViewports()
-
-		case keySelectTheirs:
-			m.selectedSide = selectedTheirs
-			m.updateViewports()
-
-		case keyScrollLeft:
-			m.scrollHorizontal(-4)
-
-		case keyScrollRight:
-			m.scrollHorizontal(4)
-
-		case keyScrollDown:
-			m.scrollVertical(1)
-
-		case keyScrollUp:
-			m.scrollVertical(-1)
-
-		case keyApplyOurs:
-			// Apply ours
-			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionOurs); err != nil {
-				m.err = fmt.Errorf("failed to apply ours: %w", err)
+		if action, ok := resolverKeyActions[key]; ok {
+			actionCmd, err := action(&m)
+			if err != nil {
+				m.err = err
+				m.quitting = true
 				return m, tea.Quit
 			}
-			delete(m.manualResolved, m.currentConflict)
-			m.doc = m.state.Document()
-			m.updateViewports()
-
-		case keyApplyTheirs:
-			// Apply theirs
-			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionTheirs); err != nil {
-				m.err = fmt.Errorf("failed to apply theirs: %w", err)
-				return m, tea.Quit
+			if actionCmd != nil {
+				return m, actionCmd
 			}
-			delete(m.manualResolved, m.currentConflict)
-			m.doc = m.state.Document()
-			m.updateViewports()
-
-		case keyApplyOursAll:
-			// Apply ours to all conflicts
-			if err := m.state.ApplyAll(markers.ResolutionOurs); err != nil {
-				m.err = fmt.Errorf("failed to apply ours to all: %w", err)
-				return m, tea.Quit
-			}
-			m.manualResolved = map[int][]byte{}
-			m.doc = m.state.Document()
-			m.updateViewports()
-
-		case keyApplyTheirsAll:
-			// Apply theirs to all conflicts
-			if err := m.state.ApplyAll(markers.ResolutionTheirs); err != nil {
-				m.err = fmt.Errorf("failed to apply theirs to all: %w", err)
-				return m, tea.Quit
-			}
-			m.manualResolved = map[int][]byte{}
-			m.doc = m.state.Document()
-			m.updateViewports()
-
-		case keyAccept, keyAcceptSpace:
-			if err := m.applySelectedSide(); err != nil {
-				m.err = fmt.Errorf("failed to apply selection: %w", err)
-				return m, tea.Quit
-			}
-
-		case keyDiscard:
-			// Discard selection
-			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionNone); err != nil {
-				m.err = fmt.Errorf("failed to discard selection: %w", err)
-				return m, tea.Quit
-			}
-			delete(m.manualResolved, m.currentConflict)
-			m.doc = m.state.Document()
-			m.updateViewports()
-
-		case keyApplyBoth:
-			// Apply both
-			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionBoth); err != nil {
-				m.err = fmt.Errorf("failed to apply both: %w", err)
-				return m, tea.Quit
-			}
-			delete(m.manualResolved, m.currentConflict)
-			m.doc = m.state.Document()
-			m.updateViewports()
-
-		case keyApplyNone:
-			// Apply none
-			if err := m.state.ApplyResolution(m.currentConflict, markers.ResolutionNone); err != nil {
-				m.err = fmt.Errorf("failed to apply none: %w", err)
-				return m, tea.Quit
-			}
-			delete(m.manualResolved, m.currentConflict)
-			m.doc = m.state.Document()
-			m.updateViewports()
-
-		case keyUndo:
-			// Undo
-			if err := m.state.Undo(); err == nil {
-				m.doc = m.state.Document()
-				m.updateViewports()
-			}
-
-		case keyWrite, keyCtrlS:
-			// Write resolved file
-			if err := m.writeResolved(); err != nil {
-				m.err = fmt.Errorf("failed to write resolved: %w", err)
-				return m, tea.Quit
-			}
-			m.doc = m.state.Document()
-			m.updateViewports()
-			return m, m.showToast("Saved", 2)
-
-		case keyEdit:
-			return m, m.openEditor()
 		}
 
 	case tea.WindowSizeMsg:
@@ -767,6 +664,164 @@ func (m *model) applySelectedSide() error {
 	m.doc = m.state.Document()
 	m.updateViewports()
 	return nil
+}
+
+func (m *model) applyResolution(resolution markers.Resolution) error {
+	if err := m.state.ApplyResolution(m.currentConflict, resolution); err != nil {
+		return err
+	}
+	delete(m.manualResolved, m.currentConflict)
+	m.doc = m.state.Document()
+	m.updateViewports()
+	return nil
+}
+
+func (m *model) applyAll(resolution markers.Resolution) error {
+	if err := m.state.ApplyAll(resolution); err != nil {
+		return err
+	}
+	m.manualResolved = map[int][]byte{}
+	m.doc = m.state.Document()
+	m.updateViewports()
+	return nil
+}
+
+func (m *model) handleQuit() (tea.Cmd, error) {
+	m.err = ErrBackToSelector
+	m.quitting = true
+	return tea.Quit, nil
+}
+
+func (m *model) handleCtrlC() (tea.Cmd, error) {
+	m.quitting = true
+	return tea.Quit, nil
+}
+
+func (m *model) handleNextConflict() (tea.Cmd, error) {
+	if m.currentConflict < len(m.doc.Conflicts)-1 {
+		m.currentConflict++
+		m.pendingScroll = true
+		m.updateViewports()
+	}
+	return nil, nil
+}
+
+func (m *model) handlePrevConflict() (tea.Cmd, error) {
+	if m.currentConflict > 0 {
+		m.currentConflict--
+		m.pendingScroll = true
+		m.updateViewports()
+	}
+	return nil, nil
+}
+
+func (m *model) handleSelectOurs() (tea.Cmd, error) {
+	m.selectedSide = selectedOurs
+	m.updateViewports()
+	return nil, nil
+}
+
+func (m *model) handleSelectTheirs() (tea.Cmd, error) {
+	m.selectedSide = selectedTheirs
+	m.updateViewports()
+	return nil, nil
+}
+
+func (m *model) handleScrollLeft() (tea.Cmd, error) {
+	m.scrollHorizontal(-4)
+	return nil, nil
+}
+
+func (m *model) handleScrollRight() (tea.Cmd, error) {
+	m.scrollHorizontal(4)
+	return nil, nil
+}
+
+func (m *model) handleScrollDown() (tea.Cmd, error) {
+	m.scrollVertical(1)
+	return nil, nil
+}
+
+func (m *model) handleScrollUp() (tea.Cmd, error) {
+	m.scrollVertical(-1)
+	return nil, nil
+}
+
+func (m *model) handleApplyOurs() (tea.Cmd, error) {
+	if err := m.applyResolution(markers.ResolutionOurs); err != nil {
+		return nil, fmt.Errorf("failed to apply ours: %w", err)
+	}
+	return nil, nil
+}
+
+func (m *model) handleApplyTheirs() (tea.Cmd, error) {
+	if err := m.applyResolution(markers.ResolutionTheirs); err != nil {
+		return nil, fmt.Errorf("failed to apply theirs: %w", err)
+	}
+	return nil, nil
+}
+
+func (m *model) handleApplyOursAll() (tea.Cmd, error) {
+	if err := m.applyAll(markers.ResolutionOurs); err != nil {
+		return nil, fmt.Errorf("failed to apply ours to all: %w", err)
+	}
+	return nil, nil
+}
+
+func (m *model) handleApplyTheirsAll() (tea.Cmd, error) {
+	if err := m.applyAll(markers.ResolutionTheirs); err != nil {
+		return nil, fmt.Errorf("failed to apply theirs to all: %w", err)
+	}
+	return nil, nil
+}
+
+func (m *model) handleAccept() (tea.Cmd, error) {
+	if err := m.applySelectedSide(); err != nil {
+		return nil, fmt.Errorf("failed to apply selection: %w", err)
+	}
+	return nil, nil
+}
+
+func (m *model) handleDiscard() (tea.Cmd, error) {
+	if err := m.applyResolution(markers.ResolutionNone); err != nil {
+		return nil, fmt.Errorf("failed to discard selection: %w", err)
+	}
+	return nil, nil
+}
+
+func (m *model) handleApplyBoth() (tea.Cmd, error) {
+	if err := m.applyResolution(markers.ResolutionBoth); err != nil {
+		return nil, fmt.Errorf("failed to apply both: %w", err)
+	}
+	return nil, nil
+}
+
+func (m *model) handleApplyNone() (tea.Cmd, error) {
+	if err := m.applyResolution(markers.ResolutionNone); err != nil {
+		return nil, fmt.Errorf("failed to apply none: %w", err)
+	}
+	return nil, nil
+}
+
+func (m *model) handleUndo() (tea.Cmd, error) {
+	if err := m.state.Undo(); err == nil {
+		m.doc = m.state.Document()
+		m.updateViewports()
+	}
+	return nil, nil
+}
+
+func (m *model) handleWrite() (tea.Cmd, error) {
+	if err := m.writeResolved(); err != nil {
+		return nil, fmt.Errorf("failed to write resolved: %w", err)
+	}
+	m.doc = m.state.Document()
+	m.updateViewports()
+	return m.showToast("Saved", 2), nil
+}
+
+func (m *model) handleEdit() (tea.Cmd, error) {
+	return m.openEditor(), nil
 }
 
 func (m *model) updateViewports() {

@@ -213,16 +213,17 @@ Keybindings are vim-like by default.
 ### Navigation
 
 - n / p: next and previous conflict
+- gg / G: jump to top / bottom
 - j / k: vertical scroll
 - H / L: horizontal scroll
 
 ### Selection and apply
 
 - h / l: select ours or theirs
-- a: accept selection
+- a / space: accept selection
+- o / t / b / x: apply ours, theirs, both, or none
 - d: discard selection
-- o, t, b, x: apply ours, theirs, both, or none
-- O and T: apply ours or theirs to all
+- O / T: apply ours or theirs to all
 
 ### Other
 
