@@ -661,3 +661,45 @@ line2
 		t.Errorf("redo depth after redo should be 0, got %d", state.RedoDepth())
 	}
 }
+
+func TestNoOpApplyDoesNotGrowUndo(t *testing.T) {
+	input := []byte(`line1
+<<<<<<< HEAD
+ours
+=======
+theirs
+>>>>>>> branch
+line2
+`)
+
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	state, err := NewState(doc, 5)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+
+	if err := state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
+		t.Fatalf("ApplyResolution failed: %v", err)
+	}
+	if got := state.UndoDepth(); got != 1 {
+		t.Fatalf("UndoDepth = %d, want 1", got)
+	}
+
+	if err := state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
+		t.Fatalf("ApplyResolution no-op failed: %v", err)
+	}
+	if got := state.UndoDepth(); got != 1 {
+		t.Fatalf("UndoDepth = %d, want 1 after no-op apply", got)
+	}
+
+	if err := state.ApplyAll(markers.ResolutionOurs); err != nil {
+		t.Fatalf("ApplyAll no-op failed: %v", err)
+	}
+	if got := state.UndoDepth(); got != 1 {
+		t.Fatalf("UndoDepth = %d, want 1 after no-op apply all", got)
+	}
+}

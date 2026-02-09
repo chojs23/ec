@@ -44,15 +44,17 @@ func (s *State) ApplyResolution(conflictIndex int, resolution markers.Resolution
 		return fmt.Errorf("invalid resolution: %q", resolution)
 	}
 
-	// Save current state to undo stack before modifying, and invalidate redo history.
-	s.beginMutation()
-
-	// Apply the resolution
 	ref := s.doc.Conflicts[conflictIndex]
 	seg, ok := s.doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
 	if !ok {
 		return fmt.Errorf("internal: conflict index %d points to non-ConflictSegment", conflictIndex)
 	}
+	if seg.Resolution == resolution {
+		return nil
+	}
+
+	// Save current state to undo stack before modifying, and invalidate redo history.
+	s.beginMutation()
 
 	seg.Resolution = resolution
 	s.doc.Segments[ref.SegmentIndex] = seg
@@ -68,6 +70,21 @@ func (s *State) ApplyAll(resolution markers.Resolution) error {
 		// Valid
 	default:
 		return fmt.Errorf("invalid resolution: %q", resolution)
+	}
+
+	hasChange := false
+	for _, ref := range s.doc.Conflicts {
+		seg, ok := s.doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+		if !ok {
+			return fmt.Errorf("internal: conflict points to non-ConflictSegment")
+		}
+		if seg.Resolution != resolution {
+			hasChange = true
+			break
+		}
+	}
+	if !hasChange {
+		return nil
 	}
 
 	// Save current state to undo stack before modifying, and invalidate redo history.

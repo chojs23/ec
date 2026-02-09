@@ -379,7 +379,7 @@ func TestUpdateApplyAndUndo(t *testing.T) {
 		t.Fatalf("resolution = %q, want unset", got)
 	}
 
-	updated, _ = undone.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	updated, _ = undone.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
 	redone := updated.(model)
 	if got := conflictResolution(t, redone.doc, 0); got != markers.ResolutionOurs {
 		t.Fatalf("resolution = %q, want ours after redo", got)
@@ -427,6 +427,23 @@ func TestUpdateAcceptSelection(t *testing.T) {
 	}
 	if len(result.manualResolved) != 0 {
 		t.Fatalf("manualResolved len = %d, want 0", len(result.manualResolved))
+	}
+}
+
+func TestUpdateAcceptNoOpDoesNotGrowUndo(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	m := newModelForDoc(t, doc)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	result := updated.(model)
+	if got := result.state.UndoDepth(); got != 1 {
+		t.Fatalf("UndoDepth = %d, want 1", got)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	result = updated.(model)
+	if got := result.state.UndoDepth(); got != 1 {
+		t.Fatalf("UndoDepth = %d, want 1 after repeated accept", got)
 	}
 }
 
