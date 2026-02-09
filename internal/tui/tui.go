@@ -25,6 +25,7 @@ const (
 	keySeqTimeoutDuration = 350 * time.Millisecond
 	keyQuit               = "q"
 	keyCtrlC              = "ctrl+c"
+	keyCtrlS              = "ctrl+s"
 	keyNextConflict       = "n"
 	keyPrevConflict       = "p"
 	keySelectOurs         = "h"
@@ -63,16 +64,15 @@ var resolverKeyHelp = []keyHelpEntry{
 	{key: "h", description: "ours"},
 	{key: "l", description: "theirs"},
 	{key: "a/<space>", description: "accept"},
-	{key: "o", description: "ours"},
-	{key: "t", description: "theirs"},
+	{key: "o/O", description: "ours/ours all"},
+	{key: "t/T", description: "theirs/theirs all"},
 	{key: "b", description: "both"},
 	{key: "x", description: "none"},
 	{key: "d", description: "discard"},
-	{key: "O", description: "ours all"},
 	{key: "T", description: "theirs all"},
 	{key: "u", description: "undo"},
 	{key: "e", description: "editor"},
-	{key: "w", description: "write (allow unresolved)"},
+	{key: "w/ctrl+s", description: "write"},
 	{key: "q", description: "back to selector"},
 }
 
@@ -576,7 +576,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.updateViewports()
 			}
 
-		case keyWrite:
+		case keyWrite, keyCtrlS:
 			// Write resolved file
 			if err := m.writeResolved(); err != nil {
 				m.err = fmt.Errorf("failed to write resolved: %w", err)
