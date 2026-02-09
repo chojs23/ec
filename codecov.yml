@@ -1,0 +1,26 @@
+codecov:
+  notify:
+    wait_for_ci: true
+
+coverage:
+  status:
+    project:
+      default:
+        target: 70%
+        threshold: 2%
+        if_not_found: success
+        if_ci_failed: error
+    patch:
+      default:
+        target: 70%
+        threshold: 2%
+        if_not_found: success
+        if_ci_failed: error
+
+comment:
+  layout: "reach,diff,flags,files"
+  behavior: default
+  require_changes: false
+
+ignore:
+  - "cmd/ec/**"
