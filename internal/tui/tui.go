@@ -50,6 +50,7 @@ const (
 	keyApplyBoth          = "b"
 	keyApplyNone          = "x"
 	keyUndo               = "u"
+	keyRedo               = "ctrl+r"
 	keyWrite              = "w"
 	keyEdit               = "e"
 )
@@ -75,8 +76,8 @@ var resolverKeyHelp = []keyHelpEntry{
 	{key: "b", description: "both"},
 	{key: "x", description: "none"},
 	{key: "d", description: "discard"},
-	{key: "T", description: "theirs all"},
 	{key: "u", description: "undo"},
+	{key: "ctrl+r", description: "redo"},
 	{key: "e", description: "editor"},
 	{key: "w/ctrl+s", description: "write"},
 	{key: "q", description: "back to selector"},
@@ -107,6 +108,7 @@ var resolverKeyActions = map[string]keyAction{
 	keyApplyBoth:      (*model).handleApplyBoth,
 	keyApplyNone:      (*model).handleApplyNone,
 	keyUndo:           (*model).handleUndo,
+	keyRedo:           (*model).handleRedo,
 	keyWrite:          (*model).handleWrite,
 	keyCtrlS:          (*model).handleWrite,
 	keyEdit:           (*model).handleEdit,
@@ -635,9 +637,13 @@ func (m model) View() string {
 	if m.state.UndoDepth() > 0 {
 		undoInfo = fmt.Sprintf(" | Undo available: %d", m.state.UndoDepth())
 	}
+	redoInfo := ""
+	if m.state.RedoDepth() > 0 {
+		redoInfo = fmt.Sprintf(" | Redo available: %d", m.state.RedoDepth())
+	}
 
 	footerText := footerStyle.Width(m.width).Render(
-		fmt.Sprintf("%s%s", resolverFooterKeyMapText(), undoInfo),
+		fmt.Sprintf("%s%s%s", resolverFooterKeyMapText(), undoInfo, redoInfo),
 	)
 	footer := lipgloss.JoinVertical(lipgloss.Left, footerText, m.renderToastLine())
 
@@ -813,6 +819,14 @@ func (m *model) handleApplyNone() (tea.Cmd, error) {
 
 func (m *model) handleUndo() (tea.Cmd, error) {
 	if err := m.state.Undo(); err == nil {
+		m.doc = m.state.Document()
+		m.updateViewports()
+	}
+	return nil, nil
+}
+
+func (m *model) handleRedo() (tea.Cmd, error) {
+	if err := m.state.Redo(); err == nil {
 		m.doc = m.state.Document()
 		m.updateViewports()
 	}

@@ -228,6 +228,7 @@ Keybindings are vim-like by default.
 ### Other
 
 - u: undo
+- ctrl+r: redo
 - e: open $EDITOR with current result
 - w / ctrl+s: write file without quitting
 - q: back to selector or quit

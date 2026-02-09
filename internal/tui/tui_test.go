@@ -378,6 +378,12 @@ func TestUpdateApplyAndUndo(t *testing.T) {
 	if got := conflictResolution(t, undone.doc, 0); got != markers.ResolutionUnset {
 		t.Fatalf("resolution = %q, want unset", got)
 	}
+
+	updated, _ = undone.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	redone := updated.(model)
+	if got := conflictResolution(t, redone.doc, 0); got != markers.ResolutionOurs {
+		t.Fatalf("resolution = %q, want ours after redo", got)
+	}
 }
 
 func TestUpdateApplyAllClearsManual(t *testing.T) {
@@ -573,7 +579,7 @@ func TestUpdateIgnoresUnmappedViewportKeys(t *testing.T) {
 		viewportModel.SetContent(lines)
 	}
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'y'}})
 	result := updated.(model)
 
 	if result.viewportOurs.YOffset != 0 {

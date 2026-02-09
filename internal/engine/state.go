@@ -10,6 +10,7 @@ import (
 type State struct {
 	doc         markers.Document
 	undoStack   []markers.Document
+	redoStack   []markers.Document
 	maxUndoSize int
 }
 
@@ -22,6 +23,7 @@ func NewState(doc markers.Document, maxUndoSize int) (*State, error) {
 	return &State{
 		doc:         doc,
 		undoStack:   make([]markers.Document, 0, maxUndoSize),
+		redoStack:   make([]markers.Document, 0, maxUndoSize),
 		maxUndoSize: maxUndoSize,
 	}, nil
 }
@@ -42,8 +44,8 @@ func (s *State) ApplyResolution(conflictIndex int, resolution markers.Resolution
 		return fmt.Errorf("invalid resolution: %q", resolution)
 	}
 
-	// Save current state to undo stack before modifying
-	s.pushUndo()
+	// Save current state to undo stack before modifying, and invalidate redo history.
+	s.beginMutation()
 
 	// Apply the resolution
 	ref := s.doc.Conflicts[conflictIndex]
@@ -68,8 +70,8 @@ func (s *State) ApplyAll(resolution markers.Resolution) error {
 		return fmt.Errorf("invalid resolution: %q", resolution)
 	}
 
-	// Save current state to undo stack before modifying
-	s.pushUndo()
+	// Save current state to undo stack before modifying, and invalidate redo history.
+	s.beginMutation()
 
 	for _, ref := range s.doc.Conflicts {
 		seg, ok := s.doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
@@ -90,10 +92,30 @@ func (s *State) Undo() error {
 		return fmt.Errorf("no undo history available")
 	}
 
+	// Save current state to redo stack before restoring previous state.
+	s.pushWithLimit(&s.redoStack, s.doc)
+
 	// Pop the last state
 	lastIdx := len(s.undoStack) - 1
 	s.doc = s.undoStack[lastIdx]
 	s.undoStack = s.undoStack[:lastIdx]
+
+	return nil
+}
+
+// Redo reapplies a previously undone state.
+// Returns error if no redo history is available.
+func (s *State) Redo() error {
+	if len(s.redoStack) == 0 {
+		return fmt.Errorf("no redo history available")
+	}
+
+	// Save current state to undo stack before restoring redone state.
+	s.pushWithLimit(&s.undoStack, s.doc)
+
+	lastIdx := len(s.redoStack) - 1
+	s.doc = s.redoStack[lastIdx]
+	s.redoStack = s.redoStack[:lastIdx]
 
 	return nil
 }
@@ -115,16 +137,33 @@ func (s *State) UndoDepth() int {
 	return len(s.undoStack)
 }
 
-// pushUndo saves the current document state to the undo stack.
-// If the stack exceeds maxUndoSize, the oldest entry is removed.
-func (s *State) pushUndo() {
+// RedoDepth returns the current number of redo operations available.
+func (s *State) RedoDepth() int {
+	return len(s.redoStack)
+}
+
+// beginMutation saves the current state to undo and clears redo history.
+func (s *State) beginMutation() {
+	s.pushWithLimit(&s.undoStack, s.doc)
+	s.redoStack = s.redoStack[:0]
+}
+
+// pushWithLimit saves a document snapshot into the stack and enforces max size.
+func (s *State) pushWithLimit(stack *[]markers.Document, doc markers.Document) {
+	*stack = append(*stack, cloneDocument(doc))
+	if len(*stack) > s.maxUndoSize {
+		*stack = (*stack)[1:]
+	}
+}
+
+func cloneDocument(doc markers.Document) markers.Document {
 	// Deep copy the document to preserve state
 	docCopy := markers.Document{
-		Segments:  make([]markers.Segment, len(s.doc.Segments)),
-		Conflicts: make([]markers.ConflictRef, len(s.doc.Conflicts)),
+		Segments:  make([]markers.Segment, len(doc.Segments)),
+		Conflicts: make([]markers.ConflictRef, len(doc.Conflicts)),
 	}
 
-	for i, seg := range s.doc.Segments {
+	for i, seg := range doc.Segments {
 		switch v := seg.(type) {
 		case markers.TextSegment:
 			// TextSegment.Bytes is immutable (we never modify it), so shallow copy is safe
@@ -135,12 +174,6 @@ func (s *State) pushUndo() {
 		}
 	}
 
-	copy(docCopy.Conflicts, s.doc.Conflicts)
-
-	s.undoStack = append(s.undoStack, docCopy)
-
-	// Trim if exceeds max size
-	if len(s.undoStack) > s.maxUndoSize {
-		s.undoStack = s.undoStack[1:]
-	}
+	copy(docCopy.Conflicts, doc.Conflicts)
+	return docCopy
 }
