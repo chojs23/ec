@@ -254,8 +254,13 @@ The TUI can load colors from a theme config file.
 Config path:
 
 ```
-$XDG_CONFIG_HOME/ec/themes.json (defaults to ~/.config/ec/themes.json)
+$XDG_CONFIG_HOME/ec/themes.json (when XDG_CONFIG_HOME is set)
 ```
+
+If `XDG_CONFIG_HOME` is not set, ec uses `os.UserConfigDir()/ec/themes.json`.
+Typical defaults are `~/.config/ec/themes.json` on Linux,
+`~/Library/Application Support/ec/themes.json` on macOS,
+and `%AppData%\ec\themes.json` on Windows.
 
 Example:
 
