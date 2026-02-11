@@ -120,6 +120,14 @@ func loadThemeFromConfig() (Theme, error) {
 }
 
 func themeConfigPath() (string, error) {
+	xdgConfigDir := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if xdgConfigDir != "" {
+		if !filepath.IsAbs(xdgConfigDir) {
+			return "", fmt.Errorf("XDG_CONFIG_HOME must be an absolute path")
+		}
+		return filepath.Join(xdgConfigDir, "ec", themeConfigFileName), nil
+	}
+
 	configDir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err
