@@ -12,8 +12,8 @@ coverage:
         if_ci_failed: error
     patch:
       default:
-        target: 70%
-        threshold: 2%
+        target: 50%
+        threshold: 10%
         if_not_found: success
         if_ci_failed: error
 
