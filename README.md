@@ -1,6 +1,6 @@
 # ec (easy-conflict)
 
-Terminal Git merge conflict resolver with a 3 pane TUI and Neovim integration
+Terminal Git mergetool with a 3-way TUI and Neovim integration
 
 [![codecov](https://codecov.io/gh/chojs23/ec/graph/badge.svg?token=AX5BFUF8YN)](https://codecov.io/gh/chojs23/ec)
 
