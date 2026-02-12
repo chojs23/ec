@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -881,6 +882,58 @@ func TestPrepareFullDiffGuards(t *testing.T) {
 	_, _, _, _, useFullDiff = prepareFullDiff(doc, cli.Options{})
 	if useFullDiff {
 		t.Fatalf("expected useFullDiff false when paths are missing")
+	}
+}
+
+func TestIsTrulyMissingBasePath(t *testing.T) {
+	if !isTrulyMissingBasePath(os.DevNull) {
+		t.Fatalf("expected os.DevNull to be treated as missing base")
+	}
+
+	emptyPath := filepath.Join(t.TempDir(), "empty-base.txt")
+	if err := os.WriteFile(emptyPath, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	if !isTrulyMissingBasePath(emptyPath) {
+		t.Fatalf("expected empty base file to be treated as missing base")
+	}
+
+	nonEmptyPath := filepath.Join(t.TempDir(), "base.txt")
+	if err := os.WriteFile(nonEmptyPath, []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	if isTrulyMissingBasePath(nonEmptyPath) {
+		t.Fatalf("expected non-empty base file not to be treated as missing base")
+	}
+
+	missingPath := filepath.Join(t.TempDir(), "missing-base.txt")
+	if isTrulyMissingBasePath(missingPath) {
+		t.Fatalf("expected missing base path not to be treated as true missing-base case")
+	}
+}
+
+func TestShouldAllowMissingBaseFallback(t *testing.T) {
+	emptyPath := filepath.Join(t.TempDir(), "empty-base.txt")
+	if err := os.WriteFile(emptyPath, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	errMissingBase := errors.New("conflict 0 is missing base chunk (base display strategy requires exact base for all conflicts)")
+	if !shouldAllowMissingBaseFallback(cli.Options{BasePath: emptyPath}, errMissingBase) {
+		t.Fatalf("expected missing-base validation error with empty base file to allow fallback")
+	}
+
+	nonEmptyPath := filepath.Join(t.TempDir(), "base.txt")
+	if err := os.WriteFile(nonEmptyPath, []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	if shouldAllowMissingBaseFallback(cli.Options{BasePath: nonEmptyPath}, errMissingBase) {
+		t.Fatalf("expected non-empty base file not to allow fallback")
+	}
+
+	errOther := errors.New("internal: conflict 0 is not a ConflictSegment")
+	if shouldAllowMissingBaseFallback(cli.Options{BasePath: emptyPath}, errOther) {
+		t.Fatalf("expected non missing-base validation error not to allow fallback")
 	}
 }
 

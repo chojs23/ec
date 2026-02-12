@@ -222,7 +222,11 @@ func Run(ctx context.Context, opts cli.Options) error {
 	// Validate base completeness unless explicitly allowed to proceed without it.
 	if !opts.AllowMissingBase {
 		if err := engine.ValidateBaseCompleteness(doc); err != nil {
-			return fmt.Errorf("base validation failed: %w", err)
+			if shouldAllowMissingBaseFallback(opts, err) {
+				opts.AllowMissingBase = true
+			} else {
+				return fmt.Errorf("base validation failed: %w", err)
+			}
 		}
 	}
 
@@ -361,8 +365,14 @@ func (m *model) reloadFromFile() error {
 		return fmt.Errorf("parse diff3 view: %w", err)
 	}
 
-	if err := engine.ValidateBaseCompleteness(doc); err != nil {
-		return fmt.Errorf("base validation failed: %w", err)
+	if !m.opts.AllowMissingBase {
+		if err := engine.ValidateBaseCompleteness(doc); err != nil {
+			if shouldAllowMissingBaseFallback(m.opts, err) {
+				m.opts.AllowMissingBase = true
+			} else {
+				return fmt.Errorf("base validation failed: %w", err)
+			}
+		}
 	}
 
 	updated, manual, err := applyMergedResolutions(doc, editedBytes)
@@ -412,6 +422,30 @@ func prepareFullDiff(doc markers.Document, opts cli.Options) ([]string, []string
 	}
 
 	return baseLines, oursLines, theirsLines, ranges, true
+}
+
+func shouldAllowMissingBaseFallback(opts cli.Options, validationErr error) bool {
+	if validationErr == nil || !strings.Contains(validationErr.Error(), "missing base chunk") {
+		return false
+	}
+
+	return isTrulyMissingBasePath(opts.BasePath)
+}
+
+func isTrulyMissingBasePath(basePath string) bool {
+	if basePath == "" {
+		return false
+	}
+	if basePath == os.DevNull {
+		return true
+	}
+
+	info, err := os.Stat(basePath)
+	if err != nil {
+		return false
+	}
+
+	return info.Size() == 0
 }
 
 func loadLines(path string) ([]string, error) {
