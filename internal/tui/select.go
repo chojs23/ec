@@ -11,13 +11,15 @@ import (
 )
 
 type FileCandidate struct {
-	Path     string
-	Resolved bool
+	Path      string
+	Resolved  bool
+	Malformed bool
 }
 
 type fileItem struct {
-	path     string
-	resolved bool
+	path      string
+	resolved  bool
+	malformed bool
 }
 
 func (f fileItem) Title() string {
@@ -69,7 +71,9 @@ func (d fileItemDelegate) Render(w io.Writer, m list.Model, index int, item list
 	}
 	label := "unresolved"
 	labelStyle := unresolvedLabelStyle
-	if file.resolved {
+	if file.malformed {
+		label = "malformed"
+	} else if file.resolved {
 		label = "resolved"
 		labelStyle = resolvedLabelStyle
 	}
@@ -93,7 +97,7 @@ func SelectFile(ctx context.Context, candidates []FileCandidate) (string, error)
 	}
 	items := make([]list.Item, 0, len(candidates))
 	for _, candidate := range candidates {
-		items = append(items, fileItem{path: candidate.Path, resolved: candidate.Resolved})
+		items = append(items, fileItem{path: candidate.Path, resolved: candidate.Resolved, malformed: candidate.Malformed})
 	}
 
 	model := fileSelectModel{list: list.New(items, fileItemDelegate{}, 0, 0)}

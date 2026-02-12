@@ -63,6 +63,7 @@ func TestFileItemDelegateRender(t *testing.T) {
 	items := []list.Item{
 		fileItem{path: "a.txt", resolved: false},
 		fileItem{path: "b.txt", resolved: true},
+		fileItem{path: "c.txt", resolved: false, malformed: true},
 	}
 	model := list.New(items, fileItemDelegate{}, 0, 0)
 	model.Select(0)
@@ -93,6 +94,14 @@ func TestFileItemDelegateRender(t *testing.T) {
 	}
 	if !strings.Contains(output, "  resolved") {
 		t.Fatalf("output = %q, want resolved label", output)
+	}
+
+	buf.Reset()
+	model.Select(2)
+	delegate.Render(&buf, model, 2, items[2])
+	output = buf.String()
+	if !strings.Contains(output, "malformed") {
+		t.Fatalf("output = %q, want malformed label", output)
 	}
 }
 

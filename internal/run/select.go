@@ -11,7 +11,9 @@ import (
 	"strings"
 
 	"github.com/chojs23/ec/internal/cli"
+	"github.com/chojs23/ec/internal/engine"
 	"github.com/chojs23/ec/internal/gitutil"
+	"github.com/chojs23/ec/internal/markers"
 	"github.com/chojs23/ec/internal/tui"
 )
 
@@ -53,6 +55,9 @@ func prepareInteractiveFromRepo(ctx context.Context, opts *cli.Options) (func(),
 	}
 	if _, err := os.Stat(mergedPath); err != nil {
 		return nil, fmt.Errorf("cannot access merged file %s: %w", selected, err)
+	}
+	if err := warnIfMalformedConflictFile(mergedPath, selected); err != nil {
+		return nil, err
 	}
 
 	localBytes, err := gitutil.ShowStage(ctx, repoRoot, 2, selected)
@@ -145,7 +150,12 @@ func buildFileCandidates(ctx context.Context, repoRoot string, paths []string) (
 	candidates := make([]tui.FileCandidate, 0, len(paths))
 	for _, path := range paths {
 		resolved := !hasUnmergedStages(ctx, repoRoot, path)
-		candidates = append(candidates, tui.FileCandidate{Path: path, Resolved: resolved})
+		mergedPath := path
+		if !filepath.IsAbs(mergedPath) {
+			mergedPath = filepath.Join(repoRoot, path)
+		}
+		malformed := hasMalformedConflictMarkers(mergedPath)
+		candidates = append(candidates, tui.FileCandidate{Path: path, Resolved: resolved, Malformed: malformed})
 	}
 	return candidates, nil
 }
@@ -158,6 +168,23 @@ func hasUnmergedStages(ctx context.Context, repoRoot string, path string) bool {
 		return true
 	}
 	return false
+}
+
+func warnIfMalformedConflictFile(mergedPath string, displayPath string) error {
+	_, err := engine.CheckResolvedFile(mergedPath)
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, markers.ErrMalformedConflict) {
+		fmt.Fprintf(os.Stderr, "Warning: malformed conflict markers detected in %s; opening resolver anyway.\n", displayPath)
+		return nil
+	}
+	return fmt.Errorf("check resolved %s: %w", displayPath, err)
+}
+
+func hasMalformedConflictMarkers(mergedPath string) bool {
+	_, err := engine.CheckResolvedFile(mergedPath)
+	return errors.Is(err, markers.ErrMalformedConflict)
 }
 
 func writeTempStages(base, local, remote []byte) (string, string, string, func(), error) {

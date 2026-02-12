@@ -3,9 +3,11 @@ package run
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/chojs23/ec/internal/cli"
@@ -52,6 +54,34 @@ func withStdout(t *testing.T, fn func()) {
 	}()
 
 	fn()
+}
+
+func withStderr(t *testing.T, fn func()) string {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe stderr: %v", err)
+	}
+	old := os.Stderr
+	os.Stderr = w
+
+	errCh := make(chan string, 1)
+	go func() {
+		var buf bytes.Buffer
+		_, _ = io.Copy(&buf, r)
+		errCh <- buf.String()
+	}()
+
+	fn()
+
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stderr writer: %v", err)
+	}
+	os.Stderr = old
+	if err := r.Close(); err != nil {
+		t.Fatalf("close stderr reader: %v", err)
+	}
+	return <-errCh
 }
 
 func TestSelectPathSingle(t *testing.T) {
@@ -181,6 +211,9 @@ func TestBuildFileCandidatesDoesNotFailOnMalformedMergedFile(t *testing.T) {
 	}
 	if candidates[0].Resolved {
 		t.Fatalf("expected malformed merged conflict to remain unresolved based on index stages")
+	}
+	if !candidates[0].Malformed {
+		t.Fatalf("expected malformed candidate flag to be true")
 	}
 }
 
@@ -344,6 +377,89 @@ func TestPrepareInteractiveFromRepoPopulatesOptions(t *testing.T) {
 	}
 	if string(remoteBytes) != "theirs\n" {
 		t.Fatalf("remote temp content = %q, want theirs", string(remoteBytes))
+	}
+}
+
+func TestPrepareInteractiveFromRepoWarnsOnMalformedMergedMarkers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping git integration test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	repoDir := t.TempDir()
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+	runGit(t, repoDir, "config", "user.name", "Test User")
+
+	conflictPath := filepath.Join(repoDir, "conflict.txt")
+	if err := os.WriteFile(conflictPath, []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	runGit(t, repoDir, "add", "conflict.txt")
+	runGit(t, repoDir, "commit", "-m", "base")
+
+	runGit(t, repoDir, "checkout", "-b", "feature")
+	if err := os.WriteFile(conflictPath, []byte("theirs\n"), 0o644); err != nil {
+		t.Fatalf("write theirs: %v", err)
+	}
+	runGit(t, repoDir, "add", "conflict.txt")
+	runGit(t, repoDir, "commit", "-m", "theirs")
+
+	runGit(t, repoDir, "checkout", "-")
+	if err := os.WriteFile(conflictPath, []byte("ours\n"), 0o644); err != nil {
+		t.Fatalf("write ours: %v", err)
+	}
+	runGit(t, repoDir, "add", "conflict.txt")
+	runGit(t, repoDir, "commit", "-m", "ours")
+
+	mergeCmd := exec.Command("git", "merge", "feature")
+	mergeCmd.Dir = repoDir
+	if output, err := mergeCmd.CombinedOutput(); err == nil {
+		t.Fatalf("expected merge conflict, got success: %s", string(output))
+	}
+
+	if err := os.WriteFile(conflictPath, []byte("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>\n"), 0o644); err != nil {
+		t.Fatalf("write malformed markers: %v", err)
+	}
+
+	oldWd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd error: %v", err)
+	}
+	if err := os.Chdir(repoDir); err != nil {
+		t.Fatalf("chdir error: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(oldWd); err != nil {
+			t.Fatalf("restore cwd error: %v", err)
+		}
+	})
+
+	var opts cli.Options
+	var cleanup func()
+	var prepErr error
+	stderrOut := withStderr(t, func() {
+		withStdout(t, func() {
+			withStdin(t, "", func() {
+				cleanup, prepErr = prepareInteractiveFromRepo(context.Background(), &opts)
+			})
+		})
+	})
+	if prepErr != nil {
+		t.Fatalf("prepareInteractiveFromRepo error: %v", prepErr)
+	}
+	if cleanup == nil {
+		t.Fatalf("cleanup function is nil")
+	}
+	t.Cleanup(cleanup)
+
+	if !strings.Contains(stderrOut, "malformed conflict markers detected") {
+		t.Fatalf("expected malformed warning, got: %q", stderrOut)
+	}
+	if opts.MergedPath == "" || opts.BasePath == "" || opts.LocalPath == "" || opts.RemotePath == "" {
+		t.Fatalf("expected options paths to be set")
 	}
 }
 
