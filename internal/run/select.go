@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/chojs23/ec/internal/cli"
-	"github.com/chojs23/ec/internal/engine"
 	"github.com/chojs23/ec/internal/gitutil"
 	"github.com/chojs23/ec/internal/tui"
 )
@@ -121,7 +120,7 @@ func selectPath(paths []string) (string, error) {
 
 func selectPathInteractive(ctx context.Context, repoRoot string, paths []string) (string, error) {
 	if isInteractiveTTY() {
-		candidates, err := buildFileCandidates(repoRoot, paths)
+		candidates, err := buildFileCandidates(ctx, repoRoot, paths)
 		if err != nil {
 			return "", err
 		}
@@ -142,20 +141,23 @@ func isTTY(file *os.File) bool {
 	return (info.Mode() & os.ModeCharDevice) != 0
 }
 
-func buildFileCandidates(repoRoot string, paths []string) ([]tui.FileCandidate, error) {
+func buildFileCandidates(ctx context.Context, repoRoot string, paths []string) ([]tui.FileCandidate, error) {
 	candidates := make([]tui.FileCandidate, 0, len(paths))
 	for _, path := range paths {
-		mergedPath := path
-		if !filepath.IsAbs(mergedPath) {
-			mergedPath = filepath.Join(repoRoot, path)
-		}
-		resolved, err := engine.CheckResolvedFile(mergedPath)
-		if err != nil {
-			return nil, fmt.Errorf("check resolved %s: %w", path, err)
-		}
+		resolved := !hasUnmergedStages(ctx, repoRoot, path)
 		candidates = append(candidates, tui.FileCandidate{Path: path, Resolved: resolved})
 	}
 	return candidates, nil
+}
+
+func hasUnmergedStages(ctx context.Context, repoRoot string, path string) bool {
+	if _, err := gitutil.ShowStage(ctx, repoRoot, 2, path); err == nil {
+		return true
+	}
+	if _, err := gitutil.ShowStage(ctx, repoRoot, 3, path); err == nil {
+		return true
+	}
+	return false
 }
 
 func writeTempStages(base, local, remote []byte) (string, string, string, func(), error) {
