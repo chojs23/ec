@@ -3,6 +3,7 @@ package tui
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -882,6 +883,166 @@ func TestPrepareFullDiffGuards(t *testing.T) {
 	if useFullDiff {
 		t.Fatalf("expected useFullDiff false when paths are missing")
 	}
+}
+
+func TestIsTrulyMissingBasePath(t *testing.T) {
+	if !isTrulyMissingBasePath(os.DevNull) {
+		t.Fatalf("expected os.DevNull to be treated as missing base")
+	}
+
+	emptyPath := filepath.Join(t.TempDir(), "empty-base.txt")
+	if err := os.WriteFile(emptyPath, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	if !isTrulyMissingBasePath(emptyPath) {
+		t.Fatalf("expected empty base file to be treated as missing base")
+	}
+
+	nonEmptyPath := filepath.Join(t.TempDir(), "base.txt")
+	if err := os.WriteFile(nonEmptyPath, []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	if isTrulyMissingBasePath(nonEmptyPath) {
+		t.Fatalf("expected non-empty base file not to be treated as missing base")
+	}
+
+	missingPath := filepath.Join(t.TempDir(), "missing-base.txt")
+	if isTrulyMissingBasePath(missingPath) {
+		t.Fatalf("expected missing base path not to be treated as true missing-base case")
+	}
+}
+
+func TestShouldAllowMissingBaseFallback(t *testing.T) {
+	emptyPath := filepath.Join(t.TempDir(), "empty-base.txt")
+	if err := os.WriteFile(emptyPath, nil, 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	errMissingBase := errors.New("conflict 0 is missing base chunk (base display strategy requires exact base for all conflicts)")
+	if !shouldAllowMissingBaseFallback(context.Background(), cli.Options{BasePath: emptyPath}, errMissingBase) {
+		t.Fatalf("expected missing-base validation error with empty base file to allow fallback")
+	}
+
+	nonEmptyPath := filepath.Join(t.TempDir(), "base.txt")
+	if err := os.WriteFile(nonEmptyPath, []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	if shouldAllowMissingBaseFallback(context.Background(), cli.Options{BasePath: nonEmptyPath}, errMissingBase) {
+		t.Fatalf("expected non-empty base file not to allow fallback")
+	}
+
+	errOther := errors.New("internal: conflict 0 is not a ConflictSegment")
+	if shouldAllowMissingBaseFallback(context.Background(), cli.Options{BasePath: emptyPath}, errOther) {
+		t.Fatalf("expected non missing-base validation error not to allow fallback")
+	}
+}
+
+func TestIsTrulyMissingBaseStage_AddAddConflict(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	repoDir := t.TempDir()
+	runGitCmd(t, repoDir, "init")
+	runGitCmd(t, repoDir, "config", "user.name", "test")
+	runGitCmd(t, repoDir, "config", "user.email", "test@example.com")
+	runGitCmd(t, repoDir, "checkout", "-b", "main")
+
+	baseFile := filepath.Join(repoDir, "README.md")
+	if err := os.WriteFile(baseFile, []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	runGitCmd(t, repoDir, "add", "README.md")
+	runGitCmd(t, repoDir, "commit", "-m", "base")
+
+	runGitCmd(t, repoDir, "checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(repoDir, "temp.txt"), []byte("theirs\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	runGitCmd(t, repoDir, "add", "temp.txt")
+	runGitCmd(t, repoDir, "commit", "-m", "feature add")
+
+	runGitCmd(t, repoDir, "checkout", "main")
+	if err := os.WriteFile(filepath.Join(repoDir, "temp.txt"), []byte("ours\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	runGitCmd(t, repoDir, "add", "temp.txt")
+	runGitCmd(t, repoDir, "commit", "-m", "main add")
+
+	mergeCmd := exec.Command("git", "merge", "feature")
+	mergeCmd.Dir = repoDir
+	if out, err := mergeCmd.CombinedOutput(); err == nil {
+		t.Fatalf("expected merge conflict, got success: %s", string(out))
+	}
+
+	missing, determined := isTrulyMissingBaseStage(context.Background(), filepath.Join(repoDir, "temp.txt"))
+	if !determined {
+		t.Fatalf("expected stage check to be determined")
+	}
+	if !missing {
+		t.Fatalf("expected add/add conflict to have missing base stage")
+	}
+}
+
+func TestIsTrulyMissingBaseStage_ModifyModifyConflict(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	repoDir := t.TempDir()
+	runGitCmd(t, repoDir, "init")
+	runGitCmd(t, repoDir, "config", "user.name", "test")
+	runGitCmd(t, repoDir, "config", "user.email", "test@example.com")
+	runGitCmd(t, repoDir, "checkout", "-b", "main")
+
+	if err := os.WriteFile(filepath.Join(repoDir, "temp.txt"), []byte("base\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	runGitCmd(t, repoDir, "add", "temp.txt")
+	runGitCmd(t, repoDir, "commit", "-m", "base")
+
+	runGitCmd(t, repoDir, "checkout", "-b", "feature")
+	if err := os.WriteFile(filepath.Join(repoDir, "temp.txt"), []byte("theirs\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	runGitCmd(t, repoDir, "commit", "-am", "feature edit")
+
+	runGitCmd(t, repoDir, "checkout", "main")
+	if err := os.WriteFile(filepath.Join(repoDir, "temp.txt"), []byte("ours\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	runGitCmd(t, repoDir, "commit", "-am", "main edit")
+
+	mergeCmd := exec.Command("git", "merge", "feature")
+	mergeCmd.Dir = repoDir
+	if out, err := mergeCmd.CombinedOutput(); err == nil {
+		t.Fatalf("expected merge conflict, got success: %s", string(out))
+	}
+
+	missing, determined := isTrulyMissingBaseStage(context.Background(), filepath.Join(repoDir, "temp.txt"))
+	if !determined {
+		t.Fatalf("expected stage check to be determined")
+	}
+	if missing {
+		t.Fatalf("expected modify/modify conflict to have base stage")
+	}
+}
+
+func runGitCmd(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %s failed: %v\n%s", strings.Join(args, " "), err, string(out))
+	}
+	return string(out)
 }
 
 func TestPrepareFullDiffLoadFailure(t *testing.T) {

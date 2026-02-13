@@ -17,6 +17,7 @@ import (
 	"github.com/chojs23/ec/internal/cli"
 	"github.com/chojs23/ec/internal/engine"
 	"github.com/chojs23/ec/internal/gitmerge"
+	"github.com/chojs23/ec/internal/gitutil"
 	"github.com/chojs23/ec/internal/markers"
 )
 
@@ -222,7 +223,11 @@ func Run(ctx context.Context, opts cli.Options) error {
 	// Validate base completeness unless explicitly allowed to proceed without it.
 	if !opts.AllowMissingBase {
 		if err := engine.ValidateBaseCompleteness(doc); err != nil {
-			return fmt.Errorf("base validation failed: %w", err)
+			if shouldAllowMissingBaseFallback(ctx, opts, err) {
+				opts.AllowMissingBase = true
+			} else {
+				return fmt.Errorf("base validation failed: %w", err)
+			}
 		}
 	}
 
@@ -361,8 +366,14 @@ func (m *model) reloadFromFile() error {
 		return fmt.Errorf("parse diff3 view: %w", err)
 	}
 
-	if err := engine.ValidateBaseCompleteness(doc); err != nil {
-		return fmt.Errorf("base validation failed: %w", err)
+	if !m.opts.AllowMissingBase {
+		if err := engine.ValidateBaseCompleteness(doc); err != nil {
+			if shouldAllowMissingBaseFallback(m.ctx, m.opts, err) {
+				m.opts.AllowMissingBase = true
+			} else {
+				return fmt.Errorf("base validation failed: %w", err)
+			}
+		}
 	}
 
 	updated, manual, err := applyMergedResolutions(doc, editedBytes)
@@ -412,6 +423,76 @@ func prepareFullDiff(doc markers.Document, opts cli.Options) ([]string, []string
 	}
 
 	return baseLines, oursLines, theirsLines, ranges, true
+}
+
+func shouldAllowMissingBaseFallback(ctx context.Context, opts cli.Options, validationErr error) bool {
+	if validationErr == nil || !strings.Contains(validationErr.Error(), "missing base chunk") {
+		return false
+	}
+	if !isTrulyMissingBasePath(opts.BasePath) {
+		return false
+	}
+
+	missingStage, determined := isTrulyMissingBaseStage(ctx, opts.MergedPath)
+	if determined {
+		return missingStage
+	}
+
+	return true
+}
+
+func isTrulyMissingBasePath(basePath string) bool {
+	if basePath == "" {
+		return false
+	}
+	if basePath == os.DevNull {
+		return true
+	}
+
+	info, err := os.Stat(basePath)
+	if err != nil {
+		return false
+	}
+
+	return info.Size() == 0
+}
+
+func isTrulyMissingBaseStage(ctx context.Context, mergedPath string) (bool, bool) {
+	if mergedPath == "" {
+		return false, false
+	}
+
+	absMergedPath, err := filepath.Abs(mergedPath)
+	if err != nil {
+		return false, false
+	}
+
+	repoRoot, err := gitutil.RepoRoot(ctx, filepath.Dir(absMergedPath))
+	if err != nil {
+		return false, false
+	}
+
+	relPath, err := filepath.Rel(repoRoot, absMergedPath)
+	if err != nil {
+		return false, false
+	}
+	if relPath == ".." || strings.HasPrefix(relPath, ".."+string(filepath.Separator)) {
+		return false, false
+	}
+	relPath = filepath.ToSlash(relPath)
+
+	if _, err := gitutil.ShowStage(ctx, repoRoot, 2, relPath); err != nil {
+		return false, false
+	}
+	if _, err := gitutil.ShowStage(ctx, repoRoot, 3, relPath); err != nil {
+		return false, false
+	}
+
+	if _, err := gitutil.ShowStage(ctx, repoRoot, 1, relPath); err != nil {
+		return true, true
+	}
+
+	return false, true
 }
 
 func loadLines(path string) ([]string, error) {
