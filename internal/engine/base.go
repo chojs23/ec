@@ -23,7 +23,7 @@ func ValidateBaseCompleteness(doc markers.Document) error {
 		if !ok {
 			return fmt.Errorf("internal: conflict %d is not a ConflictSegment", i)
 		}
-		if len(seg.Base) == 0 {
+		if len(seg.Base) == 0 && seg.BaseLabel == "" {
 			return fmt.Errorf("conflict %d is missing base chunk (base display strategy requires exact base for all conflicts)", i)
 		}
 	}

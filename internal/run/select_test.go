@@ -116,15 +116,18 @@ func TestBuildFileCandidates(t *testing.T) {
 		t.Fatalf("write unresolved: %v", err)
 	}
 
-	candidates, err := buildFileCandidates(context.Background(), tmpDir, []string{"resolved.txt", "unresolved.txt"})
+	candidates, err := buildFileCandidates(tmpDir, []string{"resolved.txt", "unresolved.txt"})
 	if err != nil {
 		t.Fatalf("buildFileCandidates error: %v", err)
 	}
 	if len(candidates) != 2 {
 		t.Fatalf("candidates len = %d, want 2", len(candidates))
 	}
-	if !candidates[0].Resolved || !candidates[1].Resolved {
-		t.Fatalf("expected non-repo candidates to default to resolved status")
+	if !candidates[0].Resolved {
+		t.Fatalf("expected marker-free file to be resolved")
+	}
+	if candidates[1].Resolved {
+		t.Fatalf("expected marker-containing file to be unresolved")
 	}
 }
 
@@ -172,7 +175,7 @@ func TestBuildFileCandidatesDoesNotFailOnMalformedMergedFile(t *testing.T) {
 		t.Fatalf("write malformed conflict file: %v", err)
 	}
 
-	candidates, err := buildFileCandidates(context.Background(), repoDir, []string{"conflict.txt"})
+	candidates, err := buildFileCandidates(repoDir, []string{"conflict.txt"})
 	if err != nil {
 		t.Fatalf("buildFileCandidates error: %v", err)
 	}
@@ -180,7 +183,61 @@ func TestBuildFileCandidatesDoesNotFailOnMalformedMergedFile(t *testing.T) {
 		t.Fatalf("candidates len = %d, want 1", len(candidates))
 	}
 	if candidates[0].Resolved {
-		t.Fatalf("expected malformed merged conflict to remain unresolved based on index stages")
+		t.Fatalf("expected malformed merged conflict to remain unresolved")
+	}
+}
+
+func TestBuildFileCandidatesResolvedFromMergedContentWithoutGitAdd(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping git integration test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	repoDir := t.TempDir()
+	runGit(t, repoDir, "init")
+	runGit(t, repoDir, "config", "user.email", "test@example.com")
+	runGit(t, repoDir, "config", "user.name", "Test User")
+
+	conflictPath := filepath.Join(repoDir, "conflict.txt")
+	if err := os.WriteFile(conflictPath, []byte("a\nZ\nb\n"), 0o644); err != nil {
+		t.Fatalf("write base: %v", err)
+	}
+	runGit(t, repoDir, "add", "conflict.txt")
+	runGit(t, repoDir, "commit", "-m", "base")
+
+	runGit(t, repoDir, "checkout", "-b", "feature")
+	if err := os.WriteFile(conflictPath, []byte("a\nY\nZ\nb\n"), 0o644); err != nil {
+		t.Fatalf("write theirs: %v", err)
+	}
+	runGit(t, repoDir, "commit", "-am", "theirs")
+
+	runGit(t, repoDir, "checkout", "-")
+	if err := os.WriteFile(conflictPath, []byte("a\nX\nZ\nb\n"), 0o644); err != nil {
+		t.Fatalf("write ours: %v", err)
+	}
+	runGit(t, repoDir, "commit", "-am", "ours")
+
+	mergeCmd := exec.Command("git", "merge", "feature")
+	mergeCmd.Dir = repoDir
+	if output, err := mergeCmd.CombinedOutput(); err == nil {
+		t.Fatalf("expected merge conflict, got success: %s", string(output))
+	}
+
+	if err := os.WriteFile(conflictPath, []byte("a\nX\nZ\nb\n"), 0o644); err != nil {
+		t.Fatalf("write resolved content: %v", err)
+	}
+
+	candidates, err := buildFileCandidates(repoDir, []string{"conflict.txt"})
+	if err != nil {
+		t.Fatalf("buildFileCandidates error: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates len = %d, want 1", len(candidates))
+	}
+	if !candidates[0].Resolved {
+		t.Fatalf("expected resolved merged content to be shown as resolved without git add")
 	}
 }
 
