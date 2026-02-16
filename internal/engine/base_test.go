@@ -70,6 +70,27 @@ func TestValidateBaseCompleteness_MissingBase(t *testing.T) {
 	}
 }
 
+func TestValidateBaseCompleteness_EmptyBaseBodyWithLabel(t *testing.T) {
+	doc := markers.Document{
+		Segments: []markers.Segment{
+			markers.ConflictSegment{
+				Ours:      []byte("ours\n"),
+				Base:      nil,
+				BaseLabel: "/tmp/base.txt",
+				Theirs:    []byte("theirs\n"),
+			},
+		},
+		Conflicts: []markers.ConflictRef{
+			{SegmentIndex: 0},
+		},
+	}
+
+	err := ValidateBaseCompleteness(doc)
+	if err != nil {
+		t.Fatalf("expected no error for empty base body with base label, got: %v", err)
+	}
+}
+
 // TestBaseDisplayIntegration_RealGitConflict creates a real git conflict using
 // temp git repos and validates that the diff3 view has base chunks for all conflicts.
 func TestBaseDisplayIntegration_RealGitConflict(t *testing.T) {
