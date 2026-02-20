@@ -4,9 +4,13 @@ Terminal Git mergetool with a 3-way TUI and Neovim integration
 
 [![codecov](https://codecov.io/gh/chojs23/ec/graph/badge.svg?token=AX5BFUF8YN)](https://codecov.io/gh/chojs23/ec)
 
-<img width="1613" height="848" alt="ec 3 pane terminal merge conflict resolver" src="https://github.com/user-attachments/assets/f6903327-15c6-4fc0-9427-5bd820ba02ec" />
+<img width="1613" height="848" alt="ec 3-way terminal git mergetool" src="https://github.com/user-attachments/assets/f6903327-15c6-4fc0-9427-5bd820ba02ec" />
 
 ![ec demo resolving git merge conflicts in terminal](https://github.com/user-attachments/assets/7c3eba19-d72b-499b-b2e8-3e16f645407e)
+
+> With Lazygit
+
+![ec with lazygit](https://github.com/user-attachments/assets/debd1426-5259-47d2-aa83-def364746f3f)
 
 ec (easy-conflict) is a 3-way terminal native Git merge conflict resolver. Supports diff3 base comparison, and helps you resolve merge conflicts faster without leaving the terminal.
 
@@ -196,7 +200,7 @@ Float option notes:
 - `zindex`: float stacking order.
 
 </details>
-
+https://github.com/user-attachments/assets/debd1426-5259-47d2-aa83-def364746f3f
 ### Commands
 
 ```
