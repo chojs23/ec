@@ -164,6 +164,7 @@ type model struct {
 	useFullDiff     bool
 	currentConflict int
 	selectedSide    selectionSide
+	mergedLabels    []conflictLabels
 	manualResolved  map[int][]byte
 	resolverUndo    []resolverSnapshot
 	resolverRedo    []resolverSnapshot
@@ -183,6 +184,12 @@ type model struct {
 }
 
 type selectionSide int
+
+type conflictLabels struct {
+	OursLabel   string
+	BaseLabel   string
+	TheirsLabel string
+}
 
 type resolverSnapshot struct {
 	doc            markers.Document
@@ -212,7 +219,11 @@ func Run(ctx context.Context, opts cli.Options) error {
 	}
 
 	manualResolved := map[int][]byte{}
+	var mergedLabels []conflictLabels
 	if mergedBytes, err := os.ReadFile(opts.MergedPath); err == nil {
+		// Extract real branch labels before applying resolutions.
+		mergedLabels = extractConflictLabels(mergedBytes)
+
 		updated, manual, updateErr := applyMergedResolutions(doc, mergedBytes)
 		if updateErr == nil {
 			doc = updated
@@ -251,6 +262,7 @@ func Run(ctx context.Context, opts cli.Options) error {
 		useFullDiff:     useFullDiff,
 		currentConflict: 0,
 		selectedSide:    selectedOurs,
+		mergedLabels:    mergedLabels,
 		manualResolved:  manualResolved,
 		pendingScroll:   true,
 	}
@@ -672,8 +684,10 @@ func (m model) View() string {
 		oursStyle = selectedSidePaneStyle
 	}
 	oursTitle := "OURS"
-	if label := formatLabel(seg.OursLabel); label != "" {
-		oursTitle = fmt.Sprintf("OURS (%s)", label)
+	if m.currentConflict < len(m.mergedLabels) {
+		if label := formatLabel(m.mergedLabels[m.currentConflict].OursLabel); label != "" {
+			oursTitle = fmt.Sprintf("OURS (%s)", label)
+		}
 	}
 	oursPane := oursStyle.Render(
 		titleStyle.Render(oursTitle) + "\n" +
@@ -695,8 +709,10 @@ func (m model) View() string {
 		theirsStyle = selectedSidePaneStyle
 	}
 	theirsTitle := "THEIRS"
-	if label := formatLabel(seg.TheirsLabel); label != "" {
-		theirsTitle = fmt.Sprintf("THEIRS (%s)", label)
+	if m.currentConflict < len(m.mergedLabels) {
+		if label := formatLabel(m.mergedLabels[m.currentConflict].TheirsLabel); label != "" {
+			theirsTitle = fmt.Sprintf("THEIRS (%s)", label)
+		}
 	}
 	theirsPane := theirsStyle.Render(
 		titleStyle.Render(theirsTitle) + "\n" +
@@ -1194,8 +1210,18 @@ func renderMergedOutput(doc markers.Document, manualResolved map[int][]byte) ([]
 }
 
 func formatLabel(label string) string {
-	_ = label
-	return ""
+	if label == "" {
+		return ""
+	}
+	start, end := firstHexRun(label)
+	if start == -1 {
+		return label
+	}
+	// Truncate long commit hashes to short form (7 chars).
+	if end-start > 7 {
+		return label[:start+7] + label[end:]
+	}
+	return label
 }
 
 func firstHexRun(label string) (int, int) {
@@ -1230,6 +1256,28 @@ func isHexRune(r rune) bool {
 
 func isHexByte(b byte) bool {
 	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
+}
+
+// extractConflictLabels parses a conflict file and returns the label
+// triplet (ours/base/theirs) for each conflict. These are the real
+// branch names from git, as opposed to temp file paths produced by
+// git merge-file.
+func extractConflictLabels(data []byte) []conflictLabels {
+	doc, err := markers.Parse(data)
+	if err != nil {
+		return nil
+	}
+	labels := make([]conflictLabels, len(doc.Conflicts))
+	for i, ref := range doc.Conflicts {
+		if seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment); ok {
+			labels[i] = conflictLabels{
+				OursLabel:   seg.OursLabel,
+				BaseLabel:   seg.BaseLabel,
+				TheirsLabel: seg.TheirsLabel,
+			}
+		}
+	}
+	return labels
 }
 
 func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.Document, map[int][]byte, error) {
