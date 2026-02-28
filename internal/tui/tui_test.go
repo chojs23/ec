@@ -578,38 +578,32 @@ func TestModelViewNoLabelsWithoutMergedLabels(t *testing.T) {
 	}
 }
 
-func TestExtractConflictLabels(t *testing.T) {
-	data := []byte("start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature/add-auth\nend\n")
-	labels := extractConflictLabels(data)
-	if len(labels) != 1 {
-		t.Fatalf("expected 1 label set, got %d", len(labels))
+func TestLabelsFromConflictSpan(t *testing.T) {
+	lines := splitLinesKeepEOL([]byte("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature/add-auth\n"))
+	labels := labelsFromConflictSpan(lines)
+	if labels.OursLabel != "HEAD" {
+		t.Fatalf("OursLabel = %q, want HEAD", labels.OursLabel)
 	}
-	if labels[0].OursLabel != "HEAD" {
-		t.Fatalf("OursLabel = %q, want HEAD", labels[0].OursLabel)
-	}
-	if labels[0].TheirsLabel != "feature/add-auth" {
-		t.Fatalf("TheirsLabel = %q, want feature/add-auth", labels[0].TheirsLabel)
+	if labels.TheirsLabel != "feature/add-auth" {
+		t.Fatalf("TheirsLabel = %q, want feature/add-auth", labels.TheirsLabel)
 	}
 }
 
-func TestExtractConflictLabelsWithHash(t *testing.T) {
-	data := []byte("<<<<<<< HEAD\nours\n||||||| abc1234\nbase\n=======\ntheirs\n>>>>>>> abc1234def5678901234 (main change)\n")
-	labels := extractConflictLabels(data)
-	if len(labels) != 1 {
-		t.Fatalf("expected 1 label set, got %d", len(labels))
+func TestLabelsFromConflictSpanWithHash(t *testing.T) {
+	lines := splitLinesKeepEOL([]byte("<<<<<<< HEAD\nours\n||||||| abc1234\nbase\n=======\ntheirs\n>>>>>>> abc1234def5678901234 (main change)\n"))
+	labels := labelsFromConflictSpan(lines)
+	if labels.BaseLabel != "abc1234" {
+		t.Fatalf("BaseLabel = %q, want abc1234", labels.BaseLabel)
 	}
-	if labels[0].BaseLabel != "abc1234" {
-		t.Fatalf("BaseLabel = %q, want abc1234", labels[0].BaseLabel)
-	}
-	if labels[0].TheirsLabel != "abc1234def5678901234 (main change)" {
-		t.Fatalf("TheirsLabel = %q, want raw label", labels[0].TheirsLabel)
+	if labels.TheirsLabel != "abc1234def5678901234 (main change)" {
+		t.Fatalf("TheirsLabel = %q, want raw label", labels.TheirsLabel)
 	}
 }
 
-func TestExtractConflictLabelsInvalid(t *testing.T) {
-	labels := extractConflictLabels([]byte("no conflicts here"))
-	if len(labels) != 0 {
-		t.Fatalf("expected 0 labels for no-conflict file, got %d", len(labels))
+func TestLabelsFromConflictSpanInvalid(t *testing.T) {
+	labels := labelsFromConflictSpan(splitLinesKeepEOL([]byte("no conflicts here")))
+	if labels != (conflictLabels{}) {
+		t.Fatalf("expected zero labels for no-conflict input, got %+v", labels)
 	}
 }
 
@@ -1401,6 +1395,52 @@ func TestWriteResolvedAllowsUnresolved(t *testing.T) {
 	}
 	if !bytes.Contains(data, []byte("<<<<<<<")) {
 		t.Fatalf("expected unresolved markers to be written")
+	}
+}
+
+func TestWriteResolvedPreservesMergedLabelsForUnresolved(t *testing.T) {
+	tmpDir := t.TempDir()
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+	if err := os.WriteFile(mergedPath, []byte("original\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+
+	input := []byte("<<<<<<< /tmp/ec-local-123\nours\n=======\ntheirs\n>>>>>>> /tmp/ec-remote-456\n")
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+	state, err := engine.NewState(doc, 1)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+
+	m := model{
+		state: state,
+		opts:  cli.Options{MergedPath: mergedPath},
+		mergedLabels: []conflictLabels{{
+			OursLabel:   "ec",
+			TheirsLabel: "main",
+		}},
+		mergedLabelKnown: []bool{true},
+	}
+
+	if err := m.writeResolved(); err != nil {
+		t.Fatalf("writeResolved error = %v", err)
+	}
+
+	data, err := os.ReadFile(mergedPath)
+	if err != nil {
+		t.Fatalf("ReadFile error = %v", err)
+	}
+	if !bytes.Contains(data, []byte("<<<<<<< ec\n")) {
+		t.Fatalf("expected preserved ours label, got:\n%s", string(data))
+	}
+	if !bytes.Contains(data, []byte(">>>>>>> main\n")) {
+		t.Fatalf("expected preserved theirs label, got:\n%s", string(data))
+	}
+	if bytes.Contains(data, []byte("/tmp/ec-local-123")) || bytes.Contains(data, []byte("/tmp/ec-remote-456")) {
+		t.Fatalf("expected temp labels to be removed, got:\n%s", string(data))
 	}
 }
 

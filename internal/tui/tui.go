@@ -153,34 +153,35 @@ var (
 var ErrBackToSelector = fmt.Errorf("back to selector")
 
 type model struct {
-	ctx             context.Context
-	opts            cli.Options
-	state           *engine.State
-	doc             markers.Document
-	baseLines       []string
-	oursLines       []string
-	theirsLines     []string
-	conflictRanges  []conflictRange
-	useFullDiff     bool
-	currentConflict int
-	selectedSide    selectionSide
-	mergedLabels    []conflictLabels
-	manualResolved  map[int][]byte
-	resolverUndo    []resolverSnapshot
-	resolverRedo    []resolverSnapshot
-	pendingScroll   bool
-	keySeq          string
-	keySeqTimeout   int
-	viewportOurs    viewport.Model
-	viewportResult  viewport.Model
-	viewportTheirs  viewport.Model
-	ready           bool
-	width           int
-	height          int
-	quitting        bool
-	toastMessage    string
-	toastSeq        int
-	err             error
+	ctx              context.Context
+	opts             cli.Options
+	state            *engine.State
+	doc              markers.Document
+	baseLines        []string
+	oursLines        []string
+	theirsLines      []string
+	conflictRanges   []conflictRange
+	useFullDiff      bool
+	currentConflict  int
+	selectedSide     selectionSide
+	mergedLabels     []conflictLabels
+	mergedLabelKnown []bool
+	manualResolved   map[int][]byte
+	resolverUndo     []resolverSnapshot
+	resolverRedo     []resolverSnapshot
+	pendingScroll    bool
+	keySeq           string
+	keySeqTimeout    int
+	viewportOurs     viewport.Model
+	viewportResult   viewport.Model
+	viewportTheirs   viewport.Model
+	ready            bool
+	width            int
+	height           int
+	quitting         bool
+	toastMessage     string
+	toastSeq         int
+	err              error
 }
 
 type selectionSide int
@@ -220,12 +221,14 @@ func Run(ctx context.Context, opts cli.Options) error {
 
 	manualResolved := map[int][]byte{}
 	var mergedLabels []conflictLabels
+	var mergedLabelKnown []bool
 	if mergedBytes, err := os.ReadFile(opts.MergedPath); err == nil {
-		updated, manual, labels, updateErr := applyMergedResolutions(doc, mergedBytes)
+		updated, manual, labels, known, updateErr := applyMergedResolutions(doc, mergedBytes)
 		if updateErr == nil {
 			doc = updated
 			manualResolved = manual
 			mergedLabels = labels
+			mergedLabelKnown = known
 		}
 	}
 
@@ -249,20 +252,21 @@ func Run(ctx context.Context, opts cli.Options) error {
 	baseLines, oursLines, theirsLines, ranges, useFullDiff := prepareFullDiff(doc, opts)
 
 	m := model{
-		ctx:             ctx,
-		opts:            opts,
-		state:           state,
-		doc:             doc,
-		baseLines:       baseLines,
-		oursLines:       oursLines,
-		theirsLines:     theirsLines,
-		conflictRanges:  ranges,
-		useFullDiff:     useFullDiff,
-		currentConflict: 0,
-		selectedSide:    selectedOurs,
-		mergedLabels:    mergedLabels,
-		manualResolved:  manualResolved,
-		pendingScroll:   true,
+		ctx:              ctx,
+		opts:             opts,
+		state:            state,
+		doc:              doc,
+		baseLines:        baseLines,
+		oursLines:        oursLines,
+		theirsLines:      theirsLines,
+		conflictRanges:   ranges,
+		useFullDiff:      useFullDiff,
+		currentConflict:  0,
+		selectedSide:     selectedOurs,
+		mergedLabels:     mergedLabels,
+		mergedLabelKnown: mergedLabelKnown,
+		manualResolved:   manualResolved,
+		pendingScroll:    true,
 	}
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
@@ -323,7 +327,7 @@ func (m *model) openEditor() tea.Cmd {
 		}
 	}
 
-	resolved, _, err := renderMergedOutput(m.state.Document(), m.manualResolved)
+	resolved, _, err := renderMergedOutput(m.state.Document(), m.manualResolved, m.mergedLabels, m.mergedLabelKnown)
 	if err != nil {
 		return func() tea.Msg {
 			return editorFinishedMsg{err: fmt.Errorf("cannot generate preview for editor: %w", err)}
@@ -386,7 +390,7 @@ func (m *model) reloadFromFile() error {
 		}
 	}
 
-	updated, manual, labels, err := applyMergedResolutions(doc, editedBytes)
+	updated, manual, labels, known, err := applyMergedResolutions(doc, editedBytes)
 	if err != nil {
 		return fmt.Errorf("apply merged resolutions: %w", err)
 	}
@@ -396,6 +400,7 @@ func (m *model) reloadFromFile() error {
 		m.doc = m.state.Document()
 		m.manualResolved = manual
 		m.mergedLabels = labels
+		m.mergedLabelKnown = known
 
 		if m.currentConflict >= len(m.doc.Conflicts) {
 			m.currentConflict = len(m.doc.Conflicts) - 1
@@ -1100,7 +1105,7 @@ func (m *model) scrollVertical(delta int) {
 }
 
 func (m *model) writeResolved() error {
-	resolved, allowUnresolved, err := renderMergedOutput(m.state.Document(), m.manualResolved)
+	resolved, allowUnresolved, err := renderMergedOutput(m.state.Document(), m.manualResolved, m.mergedLabels, m.mergedLabelKnown)
 	if err != nil {
 		return fmt.Errorf("cannot write: %w", err)
 	}
@@ -1154,7 +1159,7 @@ func allResolved(doc markers.Document, manualResolved map[int][]byte) bool {
 	return true
 }
 
-func renderMergedOutput(doc markers.Document, manualResolved map[int][]byte) ([]byte, bool, error) {
+func renderMergedOutput(doc markers.Document, manualResolved map[int][]byte, mergedLabels []conflictLabels, mergedLabelKnown []bool) ([]byte, bool, error) {
 	var out bytes.Buffer
 	hasUnresolved := false
 	conflictIndex := -1
@@ -1178,6 +1183,14 @@ func renderMergedOutput(doc markers.Document, manualResolved map[int][]byte) ([]
 				out.Write(manualBytes)
 				continue
 			}
+			labels := conflictLabels{
+				OursLabel:   s.OursLabel,
+				BaseLabel:   s.BaseLabel,
+				TheirsLabel: s.TheirsLabel,
+			}
+			if conflictIndex < len(mergedLabels) && conflictIndex < len(mergedLabelKnown) && mergedLabelKnown[conflictIndex] {
+				labels = mergedLabels[conflictIndex]
+			}
 			switch s.Resolution {
 			case markers.ResolutionOurs:
 				out.Write(s.Ours)
@@ -1190,15 +1203,15 @@ func renderMergedOutput(doc markers.Document, manualResolved map[int][]byte) ([]
 				// Write nothing for this conflict.
 			default:
 				hasUnresolved = true
-				writeMarker("<<<<<<<", s.OursLabel)
+				writeMarker("<<<<<<<", labels.OursLabel)
 				out.Write(s.Ours)
-				if len(s.Base) > 0 || s.BaseLabel != "" {
-					writeMarker("|||||||", s.BaseLabel)
+				if len(s.Base) > 0 || labels.BaseLabel != "" {
+					writeMarker("|||||||", labels.BaseLabel)
 					out.Write(s.Base)
 				}
 				writeMarker("=======", "")
 				out.Write(s.Theirs)
-				writeMarker(">>>>>>>", s.TheirsLabel)
+				writeMarker(">>>>>>>", labels.TheirsLabel)
 			}
 		default:
 			return nil, false, fmt.Errorf("unknown segment type %T", seg)
@@ -1257,33 +1270,12 @@ func isHexByte(b byte) bool {
 	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
 }
 
-// extractConflictLabels parses a conflict file and returns the label
-// triplet (ours/base/theirs) for each conflict. These are the real
-// branch names from git, as opposed to temp file paths produced by
-// git merge-file.
-func extractConflictLabels(data []byte) []conflictLabels {
-	doc, err := markers.Parse(data)
-	if err != nil {
-		return nil
-	}
-	labels := make([]conflictLabels, len(doc.Conflicts))
-	for i, ref := range doc.Conflicts {
-		if seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment); ok {
-			labels[i] = conflictLabels{
-				OursLabel:   seg.OursLabel,
-				BaseLabel:   seg.BaseLabel,
-				TheirsLabel: seg.TheirsLabel,
-			}
-		}
-	}
-	return labels
-}
-
-func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.Document, map[int][]byte, []conflictLabels, error) {
+func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.Document, map[int][]byte, []conflictLabels, []bool, error) {
 	mergedLines := splitLinesKeepEOL(mergedBytes)
 	pos := 0
 	manualResolved := map[int][]byte{}
 	alignedLabels := make([]conflictLabels, len(doc.Conflicts))
+	alignedLabelKnown := make([]bool, len(doc.Conflicts))
 
 	conflictIndex := -1
 	for i, seg := range doc.Segments {
@@ -1295,7 +1287,7 @@ func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.D
 			}
 			idx := findSubslice(mergedLines, pos, textLines)
 			if idx == -1 {
-				return doc, manualResolved, alignedLabels, fmt.Errorf("failed to align text segment")
+				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("failed to align text segment")
 			}
 			pos = idx + len(textLines)
 
@@ -1310,11 +1302,12 @@ func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.D
 				nextIdx = len(mergedLines)
 			}
 			if nextIdx < pos {
-				return doc, manualResolved, alignedLabels, fmt.Errorf("failed to align conflict segment")
+				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("failed to align conflict segment")
 			}
 			spanLines := mergedLines[pos:nextIdx]
 			if containsConflictMarkers(spanLines) {
 				alignedLabels[conflictIndex] = labelsFromConflictSpan(spanLines)
+				alignedLabelKnown[conflictIndex] = true
 				pos = nextIdx
 				continue
 			}
@@ -1330,7 +1323,7 @@ func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.D
 		}
 	}
 
-	return doc, manualResolved, alignedLabels, nil
+	return doc, manualResolved, alignedLabels, alignedLabelKnown, nil
 }
 
 func labelsFromConflictSpan(lines [][]byte) conflictLabels {
