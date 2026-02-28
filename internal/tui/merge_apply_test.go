@@ -47,7 +47,7 @@ func TestApplyMergedResolutionsMatchesSelections(t *testing.T) {
 
 	for _, tc := range testCases {
 		doc := parseSingleConflictDoc(t)
-		updated, manual, err := applyMergedResolutions(doc, []byte(tc.merged))
+		updated, manual, _, err := applyMergedResolutions(doc, []byte(tc.merged))
 		if err != nil {
 			t.Fatalf("%s: applyMergedResolutions error: %v", tc.name, err)
 		}
@@ -63,7 +63,7 @@ func TestApplyMergedResolutionsMatchesSelections(t *testing.T) {
 
 func TestApplyMergedResolutionsManualEdit(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	updated, manual, err := applyMergedResolutions(doc, []byte("start\nmanual\nend\n"))
+	updated, manual, _, err := applyMergedResolutions(doc, []byte("start\nmanual\nend\n"))
 	if err != nil {
 		t.Fatalf("applyMergedResolutions error: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestApplyMergedResolutionsManualEdit(t *testing.T) {
 func TestApplyMergedResolutionsSkipsConflictMarkers(t *testing.T) {
 	merged := "start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nend\n"
 	doc := parseSingleConflictDoc(t)
-	updated, manual, err := applyMergedResolutions(doc, []byte(merged))
+	updated, manual, labels, err := applyMergedResolutions(doc, []byte(merged))
 	if err != nil {
 		t.Fatalf("applyMergedResolutions error: %v", err)
 	}
@@ -90,13 +90,34 @@ func TestApplyMergedResolutionsSkipsConflictMarkers(t *testing.T) {
 	if seg.Resolution != markers.ResolutionUnset {
 		t.Fatalf("resolution = %q, want unset", seg.Resolution)
 	}
+	if labels[0].OursLabel != "HEAD" || labels[0].TheirsLabel != "branch" {
+		t.Fatalf("labels[0] = %+v, want HEAD/branch", labels[0])
+	}
 }
 
 func TestApplyMergedResolutionsAlignmentFailure(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	_, _, err := applyMergedResolutions(doc, []byte("ours\nend\n"))
+	_, _, _, err := applyMergedResolutions(doc, []byte("ours\nend\n"))
 	if err == nil {
 		t.Fatalf("expected alignment error")
+	}
+}
+
+func TestApplyMergedResolutionsAlignsLabelsToOriginalConflictIndex(t *testing.T) {
+	doc := parseMultiConflictDoc(t)
+	merged := []byte("start\nmanual1\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nend\n")
+	_, manual, labels, err := applyMergedResolutions(doc, merged)
+	if err != nil {
+		t.Fatalf("applyMergedResolutions error: %v", err)
+	}
+	if got := string(manual[0]); got != "manual1\n" {
+		t.Fatalf("manual[0] = %q, want %q", got, "manual1\\n")
+	}
+	if labels[0].OursLabel != "" || labels[0].TheirsLabel != "" {
+		t.Fatalf("labels[0] = %+v, want empty labels for manually resolved conflict", labels[0])
+	}
+	if labels[1].OursLabel != "HEAD" || labels[1].TheirsLabel != "branch" {
+		t.Fatalf("labels[1] = %+v, want HEAD/branch", labels[1])
 	}
 }
 
