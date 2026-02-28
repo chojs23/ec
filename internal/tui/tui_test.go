@@ -386,6 +386,32 @@ func TestRunReturnsThemeLoadError(t *testing.T) {
 	}
 }
 
+func TestFormatLabel(t *testing.T) {
+	testCases := []struct {
+		name  string
+		label string
+		want  string
+	}{
+		{name: "empty", label: "", want: ""},
+		{name: "branch name", label: "main", want: "main"},
+		{name: "HEAD", label: "HEAD", want: "HEAD"},
+		{name: "feature branch", label: "feature/add-auth", want: "feature/add-auth"},
+		{name: "short hash exactly 7", label: "abc1234", want: "abc1234"},
+		{name: "long hash truncated", label: "abc1234def5678", want: "abc1234"},
+		{name: "full 40-char hash", label: "abc1234def5678901234567890abcdef12345678", want: "abc1234"},
+		{name: "hash with trailing text", label: "abc1234def5678 some info", want: "abc1234 some info"},
+		{name: "branch with short hex", label: "fix/deadbe", want: "fix/deadbe"},
+	}
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := formatLabel(tc.label)
+			if got != tc.want {
+				t.Fatalf("formatLabel(%q) = %q, want %q", tc.label, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestFirstHexRun(t *testing.T) {
 	start, end := firstHexRun("x1234567y")
 	if start != 1 || end != 8 {
@@ -484,6 +510,106 @@ func TestModelViewReady(t *testing.T) {
 	}
 	if !strings.Contains(view, "RESULT") {
 		t.Fatalf("expected RESULT header in view")
+	}
+}
+
+func TestModelViewShowsBranchLabels(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	state, err := engine.NewState(doc, 10)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+	m := model{
+		ready:           true,
+		opts:            cliOptionsWithMergedPath("merged.txt"),
+		state:           state,
+		doc:             doc,
+		currentConflict: 0,
+		selectedSide:    selectedOurs,
+		mergedLabels: []conflictLabels{
+			{OursLabel: "HEAD", TheirsLabel: "feature/add-auth"},
+		},
+		manualResolved: map[int][]byte{},
+		viewportOurs:   viewport.New(10, 5),
+		viewportResult: viewport.New(10, 5),
+		viewportTheirs: viewport.New(10, 5),
+		width:          120,
+		height:         20,
+	}
+	m.updateViewports()
+
+	view := m.View()
+	if !strings.Contains(view, "OURS (HEAD)") {
+		t.Fatalf("expected OURS (HEAD) in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "THEIRS (feature/add-auth)") {
+		t.Fatalf("expected THEIRS (feature/add-auth) in view, got:\n%s", view)
+	}
+}
+
+func TestModelViewNoLabelsWithoutMergedLabels(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	state, err := engine.NewState(doc, 10)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+	m := model{
+		ready:           true,
+		opts:            cliOptionsWithMergedPath("merged.txt"),
+		state:           state,
+		doc:             doc,
+		currentConflict: 0,
+		selectedSide:    selectedOurs,
+		manualResolved:  map[int][]byte{},
+		viewportOurs:    viewport.New(10, 5),
+		viewportResult:  viewport.New(10, 5),
+		viewportTheirs:  viewport.New(10, 5),
+		width:           120,
+		height:          20,
+	}
+	m.updateViewports()
+
+	view := m.View()
+	if strings.Contains(view, "OURS (") {
+		t.Fatalf("expected plain OURS without label when mergedLabels is nil, got:\n%s", view)
+	}
+	if strings.Contains(view, "THEIRS (") {
+		t.Fatalf("expected plain THEIRS without label when mergedLabels is nil, got:\n%s", view)
+	}
+}
+
+func TestExtractConflictLabels(t *testing.T) {
+	data := []byte("start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature/add-auth\nend\n")
+	labels := extractConflictLabels(data)
+	if len(labels) != 1 {
+		t.Fatalf("expected 1 label set, got %d", len(labels))
+	}
+	if labels[0].OursLabel != "HEAD" {
+		t.Fatalf("OursLabel = %q, want HEAD", labels[0].OursLabel)
+	}
+	if labels[0].TheirsLabel != "feature/add-auth" {
+		t.Fatalf("TheirsLabel = %q, want feature/add-auth", labels[0].TheirsLabel)
+	}
+}
+
+func TestExtractConflictLabelsWithHash(t *testing.T) {
+	data := []byte("<<<<<<< HEAD\nours\n||||||| abc1234\nbase\n=======\ntheirs\n>>>>>>> abc1234def5678901234 (main change)\n")
+	labels := extractConflictLabels(data)
+	if len(labels) != 1 {
+		t.Fatalf("expected 1 label set, got %d", len(labels))
+	}
+	if labels[0].BaseLabel != "abc1234" {
+		t.Fatalf("BaseLabel = %q, want abc1234", labels[0].BaseLabel)
+	}
+	if labels[0].TheirsLabel != "abc1234def5678901234 (main change)" {
+		t.Fatalf("TheirsLabel = %q, want raw label", labels[0].TheirsLabel)
+	}
+}
+
+func TestExtractConflictLabelsInvalid(t *testing.T) {
+	labels := extractConflictLabels([]byte("no conflicts here"))
+	if len(labels) != 0 {
+		t.Fatalf("expected 0 labels for no-conflict file, got %d", len(labels))
 	}
 }
 
