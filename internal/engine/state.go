@@ -160,7 +160,6 @@ func (s *State) Preview() ([]byte, error) {
 	return markers.RenderResolved(s.doc)
 }
 
-// Document returns a copy of the current document state.
 func (s *State) Document() markers.Document {
 	return s.doc
 }
