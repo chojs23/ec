@@ -200,7 +200,7 @@ Float option notes:
 - `zindex`: float stacking order.
 
 </details>
-https://github.com/user-attachments/assets/debd1426-5259-47d2-aa83-def364746f3f
+
 ### Commands
 
 ```
