@@ -47,7 +47,7 @@ func TestApplyMergedResolutionsMatchesSelections(t *testing.T) {
 
 	for _, tc := range testCases {
 		doc := parseSingleConflictDoc(t)
-		updated, manual, _, err := applyMergedResolutions(doc, []byte(tc.merged))
+		updated, manual, _, _, err := applyMergedResolutions(doc, []byte(tc.merged))
 		if err != nil {
 			t.Fatalf("%s: applyMergedResolutions error: %v", tc.name, err)
 		}
@@ -63,7 +63,7 @@ func TestApplyMergedResolutionsMatchesSelections(t *testing.T) {
 
 func TestApplyMergedResolutionsManualEdit(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	updated, manual, _, err := applyMergedResolutions(doc, []byte("start\nmanual\nend\n"))
+	updated, manual, _, _, err := applyMergedResolutions(doc, []byte("start\nmanual\nend\n"))
 	if err != nil {
 		t.Fatalf("applyMergedResolutions error: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestApplyMergedResolutionsManualEdit(t *testing.T) {
 func TestApplyMergedResolutionsSkipsConflictMarkers(t *testing.T) {
 	merged := "start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nend\n"
 	doc := parseSingleConflictDoc(t)
-	updated, manual, labels, err := applyMergedResolutions(doc, []byte(merged))
+	updated, manual, labels, known, err := applyMergedResolutions(doc, []byte(merged))
 	if err != nil {
 		t.Fatalf("applyMergedResolutions error: %v", err)
 	}
@@ -93,11 +93,14 @@ func TestApplyMergedResolutionsSkipsConflictMarkers(t *testing.T) {
 	if labels[0].OursLabel != "HEAD" || labels[0].TheirsLabel != "branch" {
 		t.Fatalf("labels[0] = %+v, want HEAD/branch", labels[0])
 	}
+	if !known[0] {
+		t.Fatalf("known[0] = false, want true")
+	}
 }
 
 func TestApplyMergedResolutionsAlignmentFailure(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	_, _, _, err := applyMergedResolutions(doc, []byte("ours\nend\n"))
+	_, _, _, _, err := applyMergedResolutions(doc, []byte("ours\nend\n"))
 	if err == nil {
 		t.Fatalf("expected alignment error")
 	}
@@ -106,7 +109,7 @@ func TestApplyMergedResolutionsAlignmentFailure(t *testing.T) {
 func TestApplyMergedResolutionsAlignsLabelsToOriginalConflictIndex(t *testing.T) {
 	doc := parseMultiConflictDoc(t)
 	merged := []byte("start\nmanual1\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nend\n")
-	_, manual, labels, err := applyMergedResolutions(doc, merged)
+	_, manual, labels, known, err := applyMergedResolutions(doc, merged)
 	if err != nil {
 		t.Fatalf("applyMergedResolutions error: %v", err)
 	}
@@ -118,6 +121,12 @@ func TestApplyMergedResolutionsAlignsLabelsToOriginalConflictIndex(t *testing.T)
 	}
 	if labels[1].OursLabel != "HEAD" || labels[1].TheirsLabel != "branch" {
 		t.Fatalf("labels[1] = %+v, want HEAD/branch", labels[1])
+	}
+	if known[0] {
+		t.Fatalf("known[0] = true, want false")
+	}
+	if !known[1] {
+		t.Fatalf("known[1] = false, want true")
 	}
 }
 

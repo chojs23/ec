@@ -52,7 +52,7 @@ func TestApplyMergedResolutionsManualHunk(t *testing.T) {
 	}
 
 	merged := []byte("header\nmanual1\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nfooter\n")
-	updated, manual, _, err := applyMergedResolutions(doc, merged)
+	updated, manual, _, _, err := applyMergedResolutions(doc, merged)
 	if err != nil {
 		t.Fatalf("applyMergedResolutions error = %v", err)
 	}
