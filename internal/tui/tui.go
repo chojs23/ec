@@ -245,7 +245,7 @@ func Run(ctx context.Context, opts cli.Options) error {
 	}
 
 	// Initialize state
-	state, err := engine.NewState(doc, maxUndoSize)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		return fmt.Errorf("failed to create state: %w", err)
 	}
