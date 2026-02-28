@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -244,7 +245,7 @@ func Run(ctx context.Context, opts cli.Options) error {
 	}
 
 	// Initialize state
-	state, err := engine.NewState(doc, maxUndoSize)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		return fmt.Errorf("failed to create state: %w", err)
 	}
@@ -1164,15 +1165,6 @@ func renderMergedOutput(doc markers.Document, manualResolved map[int][]byte, mer
 	hasUnresolved := false
 	conflictIndex := -1
 
-	writeMarker := func(prefix string, label string) {
-		out.WriteString(prefix)
-		if label != "" {
-			out.WriteByte(' ')
-			out.WriteString(label)
-		}
-		out.WriteByte('\n')
-	}
-
 	for _, seg := range doc.Segments {
 		switch s := seg.(type) {
 		case markers.TextSegment:
@@ -1191,27 +1183,8 @@ func renderMergedOutput(doc markers.Document, manualResolved map[int][]byte, mer
 			if conflictIndex < len(mergedLabels) && conflictIndex < len(mergedLabelKnown) && mergedLabelKnown[conflictIndex] {
 				labels = mergedLabels[conflictIndex]
 			}
-			switch s.Resolution {
-			case markers.ResolutionOurs:
-				out.Write(s.Ours)
-			case markers.ResolutionTheirs:
-				out.Write(s.Theirs)
-			case markers.ResolutionBoth:
-				out.Write(s.Ours)
-				out.Write(s.Theirs)
-			case markers.ResolutionNone:
-				// Write nothing for this conflict.
-			default:
+			if markers.AppendConflictSegment(&out, s, labels.OursLabel, labels.BaseLabel, labels.TheirsLabel) {
 				hasUnresolved = true
-				writeMarker("<<<<<<<", labels.OursLabel)
-				out.Write(s.Ours)
-				if len(s.Base) > 0 || labels.BaseLabel != "" {
-					writeMarker("|||||||", labels.BaseLabel)
-					out.Write(s.Base)
-				}
-				writeMarker("=======", "")
-				out.Write(s.Theirs)
-				writeMarker(">>>>>>>", labels.TheirsLabel)
 			}
 		default:
 			return nil, false, fmt.Errorf("unknown segment type %T", seg)
@@ -1271,7 +1244,7 @@ func isHexByte(b byte) bool {
 }
 
 func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.Document, map[int][]byte, []conflictLabels, []bool, error) {
-	mergedLines := splitLinesKeepEOL(mergedBytes)
+	mergedLines := markers.SplitLinesKeepEOL(mergedBytes)
 	pos := 0
 	manualResolved := map[int][]byte{}
 	alignedLabels := make([]conflictLabels, len(doc.Conflicts))
@@ -1281,7 +1254,7 @@ func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.D
 	for i, seg := range doc.Segments {
 		switch s := seg.(type) {
 		case markers.TextSegment:
-			textLines := splitLinesKeepEOL(s.Bytes)
+			textLines := markers.SplitLinesKeepEOL(s.Bytes)
 			if len(textLines) == 0 {
 				continue
 			}
@@ -1318,7 +1291,11 @@ func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.D
 				pos = nextIdx
 				continue
 			}
-			manualResolved[conflictIndex] = joinLines(spanLines)
+			var manualBytes []byte
+			if len(spanLines) > 0 {
+				manualBytes = bytes.Join(spanLines, nil)
+			}
+			manualResolved[conflictIndex] = manualBytes
 			pos = nextIdx
 		}
 	}
@@ -1345,7 +1322,7 @@ func labelsFromConflictSpan(lines [][]byte) conflictLabels {
 func nextTextSegmentLines(segments []markers.Segment, start int) [][]byte {
 	for i := start; i < len(segments); i++ {
 		if text, ok := segments[i].(markers.TextSegment); ok {
-			lines := splitLinesKeepEOL(text.Bytes)
+			lines := markers.SplitLinesKeepEOL(text.Bytes)
 			if len(lines) > 0 {
 				return lines
 			}
@@ -1355,17 +1332,17 @@ func nextTextSegmentLines(segments []markers.Segment, start int) [][]byte {
 }
 
 func matchResolution(lines [][]byte, seg markers.ConflictSegment) (markers.Resolution, bool) {
-	ours := splitLinesKeepEOL(seg.Ours)
-	theirs := splitLinesKeepEOL(seg.Theirs)
+	ours := markers.SplitLinesKeepEOL(seg.Ours)
+	theirs := markers.SplitLinesKeepEOL(seg.Theirs)
 	both := append(append([][]byte{}, ours...), theirs...)
 
-	if linesEqual(lines, ours) {
+	if slices.EqualFunc(lines, ours, bytes.Equal) {
 		return markers.ResolutionOurs, true
 	}
-	if linesEqual(lines, theirs) {
+	if slices.EqualFunc(lines, theirs, bytes.Equal) {
 		return markers.ResolutionTheirs, true
 	}
-	if linesEqual(lines, both) {
+	if slices.EqualFunc(lines, both, bytes.Equal) {
 		return markers.ResolutionBoth, true
 	}
 	if len(lines) == 0 {
@@ -1386,25 +1363,6 @@ func containsConflictMarkers(lines [][]byte) bool {
 	return false
 }
 
-func splitLinesKeepEOL(data []byte) [][]byte {
-	if len(data) == 0 {
-		return nil
-	}
-
-	var out [][]byte
-	start := 0
-	for i := 0; i < len(data); i++ {
-		if data[i] == '\n' {
-			out = append(out, data[start:i+1])
-			start = i + 1
-		}
-	}
-	if start < len(data) {
-		out = append(out, data[start:])
-	}
-	return out
-}
-
 func findSubslice(haystack [][]byte, start int, needle [][]byte) int {
 	if len(needle) == 0 {
 		return start
@@ -1415,7 +1373,7 @@ func findSubslice(haystack [][]byte, start int, needle [][]byte) int {
 	for i := start; i+len(needle) <= len(haystack); i++ {
 		matched := true
 		for j := range needle {
-			if !bytesEqual(haystack[i+j], needle[j]) {
+			if !bytes.Equal(haystack[i+j], needle[j]) {
 				matched = false
 				break
 			}
@@ -1425,41 +1383,6 @@ func findSubslice(haystack [][]byte, start int, needle [][]byte) int {
 		}
 	}
 	return -1
-}
-
-func linesEqual(left [][]byte, right [][]byte) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if !bytesEqual(left[i], right[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-func bytesEqual(left []byte, right []byte) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for i := range left {
-		if left[i] != right[i] {
-			return false
-		}
-	}
-	return true
-}
-
-func joinLines(lines [][]byte) []byte {
-	if len(lines) == 0 {
-		return nil
-	}
-	var b bytes.Buffer
-	for _, line := range lines {
-		b.Write(line)
-	}
-	return b.Bytes()
 }
 
 func cloneManualResolved(src map[int][]byte) map[int][]byte {
@@ -1479,44 +1402,7 @@ func manualResolvedEqual(left map[int][]byte, right map[int][]byte) bool {
 	}
 	for key, leftValue := range left {
 		rightValue, ok := right[key]
-		if !ok || !bytesEqual(leftValue, rightValue) {
-			return false
-		}
-	}
-	return true
-}
-
-func resolverDocumentsEqual(left, right markers.Document) bool {
-	if len(left.Conflicts) != len(right.Conflicts) || len(left.Segments) != len(right.Segments) {
-		return false
-	}
-	for i := range left.Conflicts {
-		if left.Conflicts[i] != right.Conflicts[i] {
-			return false
-		}
-	}
-	for i := range left.Segments {
-		switch l := left.Segments[i].(type) {
-		case markers.TextSegment:
-			r, ok := right.Segments[i].(markers.TextSegment)
-			if !ok || !bytesEqual(l.Bytes, r.Bytes) {
-				return false
-			}
-		case markers.ConflictSegment:
-			r, ok := right.Segments[i].(markers.ConflictSegment)
-			if !ok {
-				return false
-			}
-			if !bytesEqual(l.Ours, r.Ours) || !bytesEqual(l.Base, r.Base) || !bytesEqual(l.Theirs, r.Theirs) {
-				return false
-			}
-			if l.OursLabel != r.OursLabel || l.BaseLabel != r.BaseLabel || l.TheirsLabel != r.TheirsLabel {
-				return false
-			}
-			if l.Resolution != r.Resolution {
-				return false
-			}
-		default:
+		if !ok || !bytes.Equal(leftValue, rightValue) {
 			return false
 		}
 	}
@@ -1524,29 +1410,12 @@ func resolverDocumentsEqual(left, right markers.Document) bool {
 }
 
 func resolverSnapshotsEqual(left resolverSnapshot, right resolverSnapshot) bool {
-	return resolverDocumentsEqual(left.doc, right.doc) && manualResolvedEqual(left.manualResolved, right.manualResolved)
-}
-
-func cloneResolverDocument(doc markers.Document) markers.Document {
-	cloned := markers.Document{
-		Segments:  make([]markers.Segment, len(doc.Segments)),
-		Conflicts: make([]markers.ConflictRef, len(doc.Conflicts)),
-	}
-	for i, seg := range doc.Segments {
-		switch v := seg.(type) {
-		case markers.TextSegment:
-			cloned.Segments[i] = v
-		case markers.ConflictSegment:
-			cloned.Segments[i] = v
-		}
-	}
-	copy(cloned.Conflicts, doc.Conflicts)
-	return cloned
+	return markers.DocumentsEqual(left.doc, right.doc) && manualResolvedEqual(left.manualResolved, right.manualResolved)
 }
 
 func (m *model) captureResolverSnapshot() resolverSnapshot {
 	return resolverSnapshot{
-		doc:            cloneResolverDocument(m.state.Document()),
+		doc:            markers.CloneDocument(m.state.Document()),
 		manualResolved: cloneManualResolved(m.manualResolved),
 	}
 }

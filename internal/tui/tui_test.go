@@ -47,7 +47,7 @@ func TestModelWriteDoesNotQuit(t *testing.T) {
 	}
 
 	doc := markers.Document{Segments: []markers.Segment{markers.TextSegment{Bytes: []byte("resolved\n")}}}
-	state, err := engine.NewState(doc, 1)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -95,7 +95,7 @@ func TestOpenEditorWithUnresolvedConflicts(t *testing.T) {
 		t.Fatalf("Parse error = %v", err)
 	}
 
-	state, err := engine.NewState(doc, 1)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -138,7 +138,7 @@ func TestOpenEditorUsesManualResolvedPreview(t *testing.T) {
 		t.Fatalf("Parse error = %v", err)
 	}
 
-	state, err := engine.NewState(doc, 10)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -226,7 +226,7 @@ func TestReloadFromFilePreservesManualResolution(t *testing.T) {
 		t.Fatalf("Parse error = %v", err)
 	}
 
-	state, err := engine.NewState(doc, 10)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -318,7 +318,7 @@ func TestReloadFromFileKeepsExistingUndoHistory(t *testing.T) {
 		t.Fatalf("Parse error = %v", err)
 	}
 
-	state, err := engine.NewState(doc, 10)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -484,7 +484,7 @@ func TestModelViewNoConflicts(t *testing.T) {
 
 func TestModelViewReady(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	state, err := engine.NewState(doc, 10)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -515,7 +515,7 @@ func TestModelViewReady(t *testing.T) {
 
 func TestModelViewShowsBranchLabels(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	state, err := engine.NewState(doc, 10)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -549,7 +549,7 @@ func TestModelViewShowsBranchLabels(t *testing.T) {
 
 func TestModelViewNoLabelsWithoutMergedLabels(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	state, err := engine.NewState(doc, 10)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -579,7 +579,7 @@ func TestModelViewNoLabelsWithoutMergedLabels(t *testing.T) {
 }
 
 func TestLabelsFromConflictSpan(t *testing.T) {
-	lines := splitLinesKeepEOL([]byte("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature/add-auth\n"))
+	lines := markers.SplitLinesKeepEOL([]byte("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature/add-auth\n"))
 	labels := labelsFromConflictSpan(lines)
 	if labels.OursLabel != "HEAD" {
 		t.Fatalf("OursLabel = %q, want HEAD", labels.OursLabel)
@@ -590,7 +590,7 @@ func TestLabelsFromConflictSpan(t *testing.T) {
 }
 
 func TestLabelsFromConflictSpanWithHash(t *testing.T) {
-	lines := splitLinesKeepEOL([]byte("<<<<<<< HEAD\nours\n||||||| abc1234\nbase\n=======\ntheirs\n>>>>>>> abc1234def5678901234 (main change)\n"))
+	lines := markers.SplitLinesKeepEOL([]byte("<<<<<<< HEAD\nours\n||||||| abc1234\nbase\n=======\ntheirs\n>>>>>>> abc1234def5678901234 (main change)\n"))
 	labels := labelsFromConflictSpan(lines)
 	if labels.BaseLabel != "abc1234" {
 		t.Fatalf("BaseLabel = %q, want abc1234", labels.BaseLabel)
@@ -601,7 +601,7 @@ func TestLabelsFromConflictSpanWithHash(t *testing.T) {
 }
 
 func TestLabelsFromConflictSpanInvalid(t *testing.T) {
-	labels := labelsFromConflictSpan(splitLinesKeepEOL([]byte("no conflicts here")))
+	labels := labelsFromConflictSpan(markers.SplitLinesKeepEOL([]byte("no conflicts here")))
 	if labels != (conflictLabels{}) {
 		t.Fatalf("expected zero labels for no-conflict input, got %+v", labels)
 	}
@@ -664,6 +664,23 @@ func TestUpdateApplyAndUndo(t *testing.T) {
 	redone := updated.(model)
 	if got := conflictResolution(t, redone.doc, 0); got != markers.ResolutionOurs {
 		t.Fatalf("resolution = %q, want ours after redo", got)
+	}
+}
+
+func TestUpdateApplyUsesResolverUndo(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	m := newModelForDoc(t, doc)
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	applied := updated.(model)
+	if got := applied.undoDepth(); got != 1 {
+		t.Fatalf("resolver UndoDepth = %d, want 1", got)
+	}
+
+	updated, _ = applied.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
+	undone := updated.(model)
+	if got := conflictResolution(t, undone.doc, 0); got != markers.ResolutionUnset {
+		t.Fatalf("resolution = %q, want unset after undo", got)
 	}
 }
 
@@ -935,7 +952,7 @@ func TestUpdateWriteKey(t *testing.T) {
 	}
 
 	doc := markers.Document{Segments: []markers.Segment{markers.TextSegment{Bytes: []byte("resolved\n")}}}
-	state, err := engine.NewState(doc, 1)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -1218,7 +1235,7 @@ func parseMultiConflictDoc(t *testing.T) markers.Document {
 
 func newModelForDoc(t *testing.T, doc markers.Document) model {
 	t.Helper()
-	state, err := engine.NewState(doc, 10)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -1375,7 +1392,7 @@ func TestWriteResolvedAllowsUnresolved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error = %v", err)
 	}
-	state, err := engine.NewState(doc, 1)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -1410,7 +1427,7 @@ func TestWriteResolvedPreservesMergedLabelsForUnresolved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error = %v", err)
 	}
-	state, err := engine.NewState(doc, 1)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
@@ -1452,7 +1469,7 @@ func TestWriteResolvedCreatesBackup(t *testing.T) {
 	}
 
 	doc := markers.Document{Segments: []markers.Segment{markers.TextSegment{Bytes: []byte("resolved\n")}}}
-	state, err := engine.NewState(doc, 1)
+	state, err := engine.NewState(doc)
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
