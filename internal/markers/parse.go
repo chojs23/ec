@@ -24,7 +24,7 @@ func Parse(data []byte) (Document, error) {
 	var doc Document
 
 	// Normalize by working line-by-line (keeping line endings).
-	lines := splitLinesKeepEOL(data)
+	lines := SplitLinesKeepEOL(data)
 
 	appendText := func(buf *bytes.Buffer) {
 		if buf.Len() == 0 {
@@ -116,25 +116,6 @@ func hasLinePrefix(line, prefix []byte) bool {
 	return bytes.HasPrefix(line, prefix)
 }
 
-func splitLinesKeepEOL(b []byte) [][]byte {
-	if len(b) == 0 {
-		return nil
-	}
-
-	var out [][]byte
-	start := 0
-	for i := 0; i < len(b); i++ {
-		if b[i] == '\n' {
-			out = append(out, b[start:i+1])
-			start = i + 1
-		}
-	}
-	if start < len(b) {
-		out = append(out, b[start:])
-	}
-	return out
-}
-
 func parseLabel(line []byte, prefix []byte) string {
 	if !bytes.HasPrefix(line, prefix) {
 		return ""
@@ -149,10 +130,9 @@ func parseLabel(line []byte, prefix []byte) string {
 // False positives (lines starting with <<<<<<< but not followed by a valid
 // conflict structure) are NOT considered conflicts.
 func IsResolved(data []byte) bool {
-	_, err := Parse(data)
+	doc, err := Parse(data)
 	if err != nil {
 		return false
 	}
-	doc, _ := Parse(data)
 	return len(doc.Conflicts) == 0
 }

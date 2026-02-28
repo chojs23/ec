@@ -41,6 +41,27 @@ func RenderResolved(doc Document) ([]byte, error) {
 func RenderWithUnresolved(doc Document) ([]byte, error) {
 	var out bytes.Buffer
 
+	for _, seg := range doc.Segments {
+		switch s := seg.(type) {
+		case TextSegment:
+			out.Write(s.Bytes)
+		case ConflictSegment:
+			appendRenderedConflictSegment(&out, s, s.OursLabel, s.BaseLabel, s.TheirsLabel)
+		default:
+			return nil, fmt.Errorf("unknown segment type %T", seg)
+		}
+	}
+
+	return out.Bytes(), nil
+}
+
+// AppendConflictSegment renders one conflict segment into out using the given labels.
+// It returns true when the segment remains unresolved and conflict markers were emitted.
+func AppendConflictSegment(out *bytes.Buffer, seg ConflictSegment, oursLabel, baseLabel, theirsLabel string) bool {
+	return appendRenderedConflictSegment(out, seg, oursLabel, baseLabel, theirsLabel)
+}
+
+func appendRenderedConflictSegment(out *bytes.Buffer, seg ConflictSegment, oursLabel, baseLabel, theirsLabel string) bool {
 	writeMarker := func(prefix []byte, label string) {
 		out.Write(prefix)
 		if label != "" {
@@ -50,36 +71,29 @@ func RenderWithUnresolved(doc Document) ([]byte, error) {
 		out.WriteByte('\n')
 	}
 
-	for _, seg := range doc.Segments {
-		switch s := seg.(type) {
-		case TextSegment:
-			out.Write(s.Bytes)
-		case ConflictSegment:
-			switch s.Resolution {
-			case ResolutionOurs:
-				out.Write(s.Ours)
-			case ResolutionTheirs:
-				out.Write(s.Theirs)
-			case ResolutionBoth:
-				out.Write(s.Ours)
-				out.Write(s.Theirs)
-			case ResolutionNone:
-				// Write nothing for this conflict.
-			default:
-				writeMarker(markStart, s.OursLabel)
-				out.Write(s.Ours)
-				if len(s.Base) > 0 || s.BaseLabel != "" {
-					writeMarker(markBase, s.BaseLabel)
-					out.Write(s.Base)
-				}
-				writeMarker(markMid, "")
-				out.Write(s.Theirs)
-				writeMarker(markEnd, s.TheirsLabel)
-			}
-		default:
-			return nil, fmt.Errorf("unknown segment type %T", seg)
+	switch seg.Resolution {
+	case ResolutionOurs:
+		out.Write(seg.Ours)
+		return false
+	case ResolutionTheirs:
+		out.Write(seg.Theirs)
+		return false
+	case ResolutionBoth:
+		out.Write(seg.Ours)
+		out.Write(seg.Theirs)
+		return false
+	case ResolutionNone:
+		return false
+	default:
+		writeMarker(markStart, oursLabel)
+		out.Write(seg.Ours)
+		if len(seg.Base) > 0 || baseLabel != "" {
+			writeMarker(markBase, baseLabel)
+			out.Write(seg.Base)
 		}
+		writeMarker(markMid, "")
+		out.Write(seg.Theirs)
+		writeMarker(markEnd, theirsLabel)
+		return true
 	}
-
-	return out.Bytes(), nil
 }

@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"bytes"
 	"fmt"
 
 	"github.com/chojs23/ec/internal/markers"
@@ -141,11 +140,11 @@ func (s *State) Redo() error {
 // ReplaceDocument replaces the current document as a single undoable mutation.
 // If the incoming document is identical to current state, no history is added.
 func (s *State) ReplaceDocument(doc markers.Document) {
-	if documentsEqual(s.doc, doc) {
+	if markers.DocumentsEqual(s.doc, doc) {
 		return
 	}
 	s.beginMutation()
-	s.doc = cloneDocument(doc)
+	s.doc = markers.CloneDocument(doc)
 }
 
 // PushUndoPoint records the current state as an undo step.
@@ -184,67 +183,8 @@ func (s *State) beginMutation() {
 
 // pushWithLimit saves a document snapshot into the stack and enforces max size.
 func (s *State) pushWithLimit(stack *[]markers.Document, doc markers.Document) {
-	*stack = append(*stack, cloneDocument(doc))
+	*stack = append(*stack, markers.CloneDocument(doc))
 	if len(*stack) > s.maxUndoSize {
 		*stack = (*stack)[1:]
 	}
-}
-
-func cloneDocument(doc markers.Document) markers.Document {
-	// Deep copy the document to preserve state
-	docCopy := markers.Document{
-		Segments:  make([]markers.Segment, len(doc.Segments)),
-		Conflicts: make([]markers.ConflictRef, len(doc.Conflicts)),
-	}
-
-	for i, seg := range doc.Segments {
-		switch v := seg.(type) {
-		case markers.TextSegment:
-			// TextSegment.Bytes is immutable (we never modify it), so shallow copy is safe
-			docCopy.Segments[i] = v
-		case markers.ConflictSegment:
-			// ConflictSegment fields are immutable byte slices and Resolution enum, shallow copy is safe
-			docCopy.Segments[i] = v
-		}
-	}
-
-	copy(docCopy.Conflicts, doc.Conflicts)
-	return docCopy
-}
-
-func documentsEqual(left, right markers.Document) bool {
-	if len(left.Conflicts) != len(right.Conflicts) || len(left.Segments) != len(right.Segments) {
-		return false
-	}
-	for i := range left.Conflicts {
-		if left.Conflicts[i] != right.Conflicts[i] {
-			return false
-		}
-	}
-	for i := range left.Segments {
-		switch l := left.Segments[i].(type) {
-		case markers.TextSegment:
-			r, ok := right.Segments[i].(markers.TextSegment)
-			if !ok || !bytes.Equal(l.Bytes, r.Bytes) {
-				return false
-			}
-		case markers.ConflictSegment:
-			r, ok := right.Segments[i].(markers.ConflictSegment)
-			if !ok {
-				return false
-			}
-			if !bytes.Equal(l.Ours, r.Ours) || !bytes.Equal(l.Base, r.Base) || !bytes.Equal(l.Theirs, r.Theirs) {
-				return false
-			}
-			if l.OursLabel != r.OursLabel || l.BaseLabel != r.BaseLabel || l.TheirsLabel != r.TheirsLabel {
-				return false
-			}
-			if l.Resolution != r.Resolution {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
 }

@@ -222,6 +222,26 @@ func TestRenderWithUnresolvedResolutionBranches(t *testing.T) {
 	}
 }
 
+func TestAppendConflictSegmentUsesProvidedLabels(t *testing.T) {
+	seg := ConflictSegment{
+		Ours:       []byte("ours\n"),
+		Base:       []byte("base\n"),
+		Theirs:     []byte("theirs\n"),
+		Resolution: ResolutionUnset,
+	}
+
+	var out bytes.Buffer
+	unresolved := AppendConflictSegment(&out, seg, "OURS", "BASE", "THEIRS")
+	if !unresolved {
+		t.Fatalf("expected unresolved=true")
+	}
+
+	want := "<<<<<<< OURS\nours\n||||||| BASE\nbase\n=======\ntheirs\n>>>>>>> THEIRS\n"
+	if out.String() != want {
+		t.Fatalf("output = %q, want %q", out.String(), want)
+	}
+}
+
 func TestRenderResolvedMultiple(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("testdata", "multiple.input"))
 	if err != nil {

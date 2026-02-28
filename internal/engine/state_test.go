@@ -724,7 +724,7 @@ line2
 		t.Fatalf("NewState failed: %v", err)
 	}
 
-	edited := cloneDocument(doc)
+	edited := markers.CloneDocument(doc)
 	editedSeg := edited.Segments[edited.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
 	editedSeg.Resolution = markers.ResolutionOurs
 	edited.Segments[edited.Conflicts[0].SegmentIndex] = editedSeg
