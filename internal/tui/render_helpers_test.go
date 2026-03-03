@@ -145,6 +145,61 @@ func TestBuildPaneLinesFromEntriesMarkers(t *testing.T) {
 	}
 }
 
+func TestBuildPaneLinesFromEntriesUsesSideRangeForNonRemoved(t *testing.T) {
+	doc := markers.Document{
+		Segments: []markers.Segment{
+			markers.TextSegment{Bytes: []byte("header\n")},
+			markers.ConflictSegment{Ours: []byte("ours\n"), Theirs: []byte("theirs\n")},
+		},
+		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
+	}
+
+	entries := []lineEntry{
+		{text: "package tui", category: categoryDefault, baseIndex: 0},
+		{text: "", category: categoryDefault, baseIndex: 1},
+		{text: "import (", category: categoryDefault, baseIndex: 2},
+		{text: "\"testing\"", category: categoryDefault, baseIndex: 3},
+		{text: ")", category: categoryDefault, baseIndex: 4},
+		{text: "conflict line 1", category: categoryModified, baseIndex: -1},
+		{text: "conflict line 2", category: categoryModified, baseIndex: -1},
+		{text: "tail", category: categoryDefault, baseIndex: 5},
+	}
+
+	ranges := []conflictRange{{
+		baseStart:   1,
+		baseEnd:     2,
+		oursStart:   5,
+		oursEnd:     7,
+		theirsStart: 5,
+		theirsEnd:   7,
+	}}
+
+	lines, _ := buildPaneLinesFromEntries(doc, paneOurs, 0, selectedOurs, entries, ranges)
+
+	startIdx := -1
+	for i, line := range lines {
+		if line.text == ">> selected hunk start (ours) >>" {
+			startIdx = i
+			break
+		}
+	}
+	if startIdx == -1 {
+		t.Fatalf("expected selected hunk start marker")
+	}
+	if startIdx != 5 {
+		t.Fatalf("start marker index = %d, want 5", startIdx)
+	}
+	if startIdx+1 >= len(lines) {
+		t.Fatalf("missing line after selected hunk start marker")
+	}
+	if lines[startIdx+1].text != "conflict line 1" || !lines[startIdx+1].selected {
+		t.Fatalf("line after marker = %+v, want selected conflict line", lines[startIdx+1])
+	}
+	if lines[1].selected {
+		t.Fatalf("blank line near top should not be selected")
+	}
+}
+
 func TestBuildResultLinesFromEntriesUnresolvedRange(t *testing.T) {
 	entries := []lineEntry{{text: "ours", category: categoryAdded, baseIndex: -1}}
 	ranges := []resultRange{{start: 0, end: 1, resolved: false}}

@@ -289,9 +289,11 @@ func buildPaneLinesFromEntries(doc markers.Document, side paneSide, highlightCon
 	for _, entry := range entries {
 		selected := false
 		if highlightConflict >= 0 {
-			if entry.baseIndex >= 0 && baseStart >= 0 && entry.baseIndex >= baseStart && entry.baseIndex < baseEnd {
-				selected = true
-			} else if entry.category != categoryRemoved && sideStart >= 0 && sideLineIndex >= sideStart && sideLineIndex < sideEnd {
+			if entry.category == categoryRemoved {
+				if entry.baseIndex >= 0 && baseStart >= 0 && entry.baseIndex >= baseStart && entry.baseIndex < baseEnd {
+					selected = true
+				}
+			} else if sideStart >= 0 && sideLineIndex >= sideStart && sideLineIndex < sideEnd {
 				selected = true
 			}
 		}
