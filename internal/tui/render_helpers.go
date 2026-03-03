@@ -499,6 +499,16 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 						dim:       true,
 						connector: connectorForResult(false, selected),
 					})
+				} else if effectiveResolution == markers.ResolutionNone && selected {
+					lines = append(lines, lineInfo{
+						text:      "[resolved: none]",
+						category:  categoryResolved,
+						highlight: true,
+						selected:  selected,
+						underline: underline,
+						dim:       false,
+						connector: connectorForResult(true, selected),
+					})
 				}
 				continue
 			}
@@ -533,7 +543,7 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 	return lines, currentStart
 }
 
-func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, manualResolved map[int][]byte) ([]string, map[int]lineCategory, []resultRange) {
+func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, manualResolved map[int][]byte, highlightConflict int) ([]string, map[int]lineCategory, []resultRange) {
 	var lines []string
 	forced := map[int]lineCategory{}
 	ranges := make([]resultRange, 0, len(doc.Conflicts))
@@ -575,9 +585,15 @@ func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, m
 				appendLines(splitLines(s.Ours))
 				appendLines(splitLines(s.Theirs))
 			case markers.ResolutionNone:
-				placeholder := "[unresolved conflict]"
-				forced[len(lines)] = categoryConflicted
-				appendLines([]string{placeholder})
+				if !resolved {
+					placeholder := "[unresolved conflict]"
+					forced[len(lines)] = categoryConflicted
+					appendLines([]string{placeholder})
+				} else if conflictIndex == highlightConflict {
+					placeholder := "[resolved: none]"
+					forced[len(lines)] = categoryResolved
+					appendLines([]string{placeholder})
+				}
 			}
 
 			ranges = append(ranges, resultRange{start: start, end: len(lines), resolved: resolved})
