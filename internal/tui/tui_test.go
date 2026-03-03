@@ -883,6 +883,43 @@ func TestUpdateKeySeqScroll(t *testing.T) {
 	}
 }
 
+func TestUpdateKeySeqRecenterSelectedHunk(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	m := newModelForDoc(t, doc)
+	m.viewportOurs.Height = 1
+	m.viewportResult.Height = 1
+	m.viewportTheirs.Height = 1
+	m.updateViewports()
+
+	m.viewportOurs.YOffset = 2
+	m.viewportResult.YOffset = 2
+	m.viewportTheirs.YOffset = 2
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	result := updated.(model)
+	if cmd == nil {
+		t.Fatalf("expected tick cmd for key sequence")
+	}
+	if result.keySeq != "z" {
+		t.Fatalf("keySeq = %q, want z", result.keySeq)
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	result = updated.(model)
+	if result.keySeq != "" {
+		t.Fatalf("keySeq = %q, want cleared", result.keySeq)
+	}
+	if result.pendingScroll {
+		t.Fatalf("pendingScroll = true, want false after recenter")
+	}
+
+	for _, viewportModel := range []*viewport.Model{&result.viewportOurs, &result.viewportResult, &result.viewportTheirs} {
+		if viewportModel.YOffset != 1 {
+			t.Fatalf("YOffset = %d, want 1 after zz", viewportModel.YOffset)
+		}
+	}
+}
+
 func TestUpdateIgnoresUnmappedViewportKeys(t *testing.T) {
 	lines := strings.Join([]string{"one", "two", "three", "four", "five", "six"}, "\n")
 	m := model{

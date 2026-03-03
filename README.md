@@ -232,6 +232,7 @@ Keybindings are vim-like by default.
 
 - n / p: next and previous conflict
 - gg / G: jump to top / bottom
+- zz: recenter on selected hunk start
 - j / k / up / down: vertical scroll
 - H / L / left / right: horizontal scroll
 
