@@ -41,6 +41,7 @@ const (
 	keyArrowDown          = "down"
 	keyArrowUp            = "up"
 	keyGoTop              = "g"
+	keyRecenter           = "z"
 	keyGoBottom           = "G"
 	keyApplyOurs          = "o"
 	keyApplyTheirs        = "t"
@@ -68,6 +69,7 @@ var resolverKeyHelp = []keyHelpEntry{
 	{key: "n", description: "next"},
 	{key: "p", description: "prev"},
 	{key: "gg/G", description: "top/bottom"},
+	{key: "zz", description: "recenter hunk"},
 	{key: "j/k/up/down", description: "scroll"},
 	{key: "H/L/left/right", description: "scroll"},
 	{key: "h", description: "ours"},
@@ -561,6 +563,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.keySeq = keyGoTop
+			m.keySeqTimeout++
+			id := m.keySeqTimeout
+			return m, tea.Tick(keySeqTimeoutDuration, func(time.Time) tea.Msg {
+				return keySeqExpiredMsg{id: id}
+			})
+		}
+		if key == keyRecenter {
+			if m.keySeq == keyRecenter {
+				m.keySeq = ""
+				m.scrollToSelectedHunkStart()
+				return m, nil
+			}
+			m.keySeq = keyRecenter
 			m.keySeqTimeout++
 			id := m.keySeqTimeout
 			return m, tea.Tick(keySeqTimeoutDuration, func(time.Time) tea.Msg {
@@ -1067,6 +1082,15 @@ func (m *model) scrollToTop() {
 	m.viewportOurs.GotoTop()
 	m.viewportResult.GotoTop()
 	m.viewportTheirs.GotoTop()
+}
+
+func (m *model) scrollToSelectedHunkStart() {
+	if m.currentConflict >= len(m.doc.Conflicts) {
+		m.pendingScroll = false
+		return
+	}
+	m.pendingScroll = true
+	m.updateViewports()
 }
 
 func (m *model) scrollToBottom() {
