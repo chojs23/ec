@@ -234,6 +234,7 @@ Keybindings are vim-like by default.
 - gg / G: jump to top / bottom
 - zz: recenter on selected hunk start
 - j / k / up / down: vertical scroll
+- ctrl+u / ctrl+d: half-page up / down
 - H / L / left / right: horizontal scroll
 
 ### Selection and apply

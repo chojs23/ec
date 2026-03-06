@@ -28,6 +28,8 @@ const (
 	keyQuit               = "q"
 	keyCtrlC              = "ctrl+c"
 	keyCtrlS              = "ctrl+s"
+	keyCtrlD              = "ctrl+d"
+	keyCtrlU              = "ctrl+u"
 	keyNextConflict       = "n"
 	keyPrevConflict       = "p"
 	keySelectOurs         = "h"
@@ -71,6 +73,7 @@ var resolverKeyHelp = []keyHelpEntry{
 	{key: "gg/G", description: "top/bottom"},
 	{key: "zz", description: "recenter hunk"},
 	{key: "j/k/up/down", description: "scroll"},
+	{key: "ctrl+u/ctrl+d", description: "half-page"},
 	{key: "H/L/left/right", description: "scroll"},
 	{key: "h", description: "ours"},
 	{key: "l", description: "theirs"},
@@ -99,6 +102,8 @@ var resolverKeyActions = map[string]keyAction{
 	keyScrollDown:     (*model).handleScrollDown,
 	keyScrollUp:       (*model).handleScrollUp,
 	keyArrowLeft:      (*model).handleScrollLeft,
+	keyCtrlU:          (*model).handleHalfPageUp,
+	keyCtrlD:          (*model).handleHalfPageDown,
 	keyArrowRight:     (*model).handleScrollRight,
 	keyArrowDown:      (*model).handleScrollDown,
 	keyArrowUp:        (*model).handleScrollUp,
@@ -873,6 +878,16 @@ func (m *model) handleScrollUp() (tea.Cmd, error) {
 	return nil, nil
 }
 
+func (m *model) handleHalfPageDown() (tea.Cmd, error) {
+	m.scrollVertical(m.halfPageScrollDelta())
+	return nil, nil
+}
+
+func (m *model) handleHalfPageUp() (tea.Cmd, error) {
+	m.scrollVertical(-m.halfPageScrollDelta())
+	return nil, nil
+}
+
 func (m *model) handleApplyOurs() (tea.Cmd, error) {
 	if err := m.applyResolution(markers.ResolutionOurs); err != nil {
 		return nil, fmt.Errorf("failed to apply ours: %w", err)
@@ -1112,6 +1127,15 @@ func (m *model) scrollHorizontal(delta int) {
 	apply(&m.viewportOurs)
 	apply(&m.viewportResult)
 	apply(&m.viewportTheirs)
+}
+
+func (m *model) halfPageScrollDelta() int {
+	height := max(m.viewportOurs.Height, m.viewportResult.Height)
+	delta := height / 2
+	if delta < 1 {
+		return 1
+	}
+	return delta
 }
 
 func (m *model) scrollVertical(delta int) {

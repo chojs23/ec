@@ -981,6 +981,34 @@ func TestUpdateVerticalScrollKeys(t *testing.T) {
 	}
 }
 
+func TestUpdateHalfPageScrollKeys(t *testing.T) {
+	lines := strings.Join([]string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"}, "\n")
+	m := model{
+		viewportOurs:   viewport.New(8, 6),
+		viewportResult: viewport.New(8, 6),
+		viewportTheirs: viewport.New(8, 6),
+	}
+	for _, viewportModel := range []*viewport.Model{&m.viewportOurs, &m.viewportResult, &m.viewportTheirs} {
+		viewportModel.SetContent(lines)
+	}
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlD})
+	result := updated.(model)
+	for _, viewportModel := range []*viewport.Model{&result.viewportOurs, &result.viewportResult, &result.viewportTheirs} {
+		if viewportModel.YOffset != 3 {
+			t.Fatalf("YOffset = %d, want 3 after ctrl+d", viewportModel.YOffset)
+		}
+	}
+
+	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyCtrlU})
+	result = updated.(model)
+	for _, viewportModel := range []*viewport.Model{&result.viewportOurs, &result.viewportResult, &result.viewportTheirs} {
+		if viewportModel.YOffset != 0 {
+			t.Fatalf("YOffset = %d, want 0 after ctrl+u", viewportModel.YOffset)
+		}
+	}
+}
+
 func TestUpdateWriteKey(t *testing.T) {
 	tmpDir := t.TempDir()
 	mergedPath := filepath.Join(tmpDir, "merged.txt")
