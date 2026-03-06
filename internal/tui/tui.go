@@ -710,7 +710,7 @@ func (m model) View() string {
 		}
 	}
 	oursPane := oursStyle.Render(
-		titleStyle.Render(oursTitle) + "\n" +
+		renderPaneTitle(oursTitle, m.viewportOurs.Width, titleStyle) + "\n" +
 			m.viewportOurs.View(),
 	)
 
@@ -718,7 +718,7 @@ func (m model) View() string {
 	if allResolved(m.doc, m.manualResolved) {
 		resultStyle = resultResolvedPaneStyle
 	}
-	resultTitle := resultTitleStyle.Render("RESULT " + statusStyle.Render("("+statusText+")"))
+	resultTitle := renderResultPaneTitle(statusText, m.viewportResult.Width, resultTitleStyle, statusStyle)
 	resultPane := resultStyle.Render(
 		resultTitle + "\n" +
 			m.viewportResult.View(),
@@ -735,7 +735,7 @@ func (m model) View() string {
 		}
 	}
 	theirsPane := theirsStyle.Render(
-		titleStyle.Render(theirsTitle) + "\n" +
+		renderPaneTitle(theirsTitle, m.viewportTheirs.Width, titleStyle) + "\n" +
 			m.viewportTheirs.View(),
 	)
 
@@ -1231,6 +1231,83 @@ func formatLabel(label string) string {
 		return label[:start+7] + label[end:]
 	}
 	return label
+}
+
+func renderPaneTitle(title string, paneWidth int, style lipgloss.Style) string {
+	if paneWidth <= 0 {
+		return ""
+	}
+
+	frameWidth := style.GetHorizontalFrameSize()
+	if paneWidth <= frameWidth {
+		return truncateDisplayWidth(title, paneWidth)
+	}
+
+	trimmed := truncateDisplayWidth(title, paneWidth-frameWidth)
+	return style.Render(trimmed)
+}
+
+func renderResultPaneTitle(statusText string, paneWidth int, titleStyle lipgloss.Style, statusStyle lipgloss.Style) string {
+	const prefix = "RESULT "
+	statusSegment := "(" + statusText + ")"
+	rawTitle := prefix + statusSegment
+
+	if paneWidth <= 0 {
+		return ""
+	}
+
+	frameWidth := titleStyle.GetHorizontalFrameSize()
+	if paneWidth <= frameWidth {
+		return truncateDisplayWidth(rawTitle, paneWidth)
+	}
+
+	trimmed := truncateDisplayWidth(rawTitle, paneWidth-frameWidth)
+	if !strings.HasPrefix(trimmed, prefix) {
+		return titleStyle.Render(trimmed)
+	}
+
+	trimmedStatus := strings.TrimPrefix(trimmed, prefix)
+	if trimmedStatus == "" {
+		return titleStyle.Render(prefix)
+	}
+
+	return titleStyle.Render(prefix + statusStyle.Render(trimmedStatus))
+}
+
+func truncateDisplayWidth(value string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+	if lipgloss.Width(value) <= maxWidth {
+		return value
+	}
+
+	const ellipsis = "..."
+	ellipsisWidth := lipgloss.Width(ellipsis)
+	if maxWidth <= ellipsisWidth {
+		return trimDisplayWidth(value, maxWidth)
+	}
+
+	return trimDisplayWidth(value, maxWidth-ellipsisWidth) + ellipsis
+}
+
+func trimDisplayWidth(value string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+
+	var b strings.Builder
+	currentWidth := 0
+	for _, r := range value {
+		runeWidth := lipgloss.Width(string(r))
+		if currentWidth+runeWidth > maxWidth {
+			break
+		}
+		b.WriteRune(r)
+		currentWidth += runeWidth
+	}
+
+	return b.String()
 }
 
 func firstHexRun(label string) (int, int) {

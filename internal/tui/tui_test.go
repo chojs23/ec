@@ -13,6 +13,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/chojs23/ec/internal/cli"
 	"github.com/chojs23/ec/internal/engine"
 	"github.com/chojs23/ec/internal/gitmerge"
@@ -412,6 +413,43 @@ func TestFormatLabel(t *testing.T) {
 	}
 }
 
+func TestRenderPaneTitleFitsPaneWidth(t *testing.T) {
+	title := "OURS (/var/folders/n5/10r8gvt52mq58dpz62c7_jt00000gn/T/ec-local-766054358)"
+	paneWidth := 34
+
+	got := renderPaneTitle(title, paneWidth, titleStyle)
+	if lipgloss.Width(got) > paneWidth {
+		t.Fatalf("renderPaneTitle width = %d, want <= %d", lipgloss.Width(got), paneWidth)
+	}
+	if !strings.Contains(got, "...") {
+		t.Fatalf("expected truncated title with ellipsis, got %q", got)
+	}
+}
+
+func TestRenderPaneTitleHandlesVeryNarrowPane(t *testing.T) {
+	got := renderPaneTitle("OURS (HEAD)", 1, titleStyle)
+	if lipgloss.Width(got) > 1 {
+		t.Fatalf("renderPaneTitle width = %d, want <= 1", lipgloss.Width(got))
+	}
+}
+
+func TestRenderResultPaneTitleFitsPaneWidth(t *testing.T) {
+	got := renderResultPaneTitle("Resolved (manual)", 18, resultTitleStyle, statusResolvedStyle)
+	if lipgloss.Width(got) > 18 {
+		t.Fatalf("renderResultPaneTitle width = %d, want <= 18", lipgloss.Width(got))
+	}
+	if !strings.Contains(got, "...") {
+		t.Fatalf("expected truncated title with ellipsis, got %q", got)
+	}
+}
+
+func TestRenderResultPaneTitleKeepsStatusWhenWide(t *testing.T) {
+	got := renderResultPaneTitle("Unresolved", 50, resultTitleStyle, statusUnresolvedStyle)
+	if !strings.Contains(got, "RESULT (Unresolved)") {
+		t.Fatalf("expected full result status title, got %q", got)
+	}
+}
+
 func TestFirstHexRun(t *testing.T) {
 	start, end := firstHexRun("x1234567y")
 	if start != 1 || end != 8 {
@@ -530,9 +568,9 @@ func TestModelViewShowsBranchLabels(t *testing.T) {
 			{OursLabel: "HEAD", TheirsLabel: "feature/add-auth"},
 		},
 		manualResolved: map[int][]byte{},
-		viewportOurs:   viewport.New(10, 5),
-		viewportResult: viewport.New(10, 5),
-		viewportTheirs: viewport.New(10, 5),
+		viewportOurs:   viewport.New(40, 5),
+		viewportResult: viewport.New(40, 5),
+		viewportTheirs: viewport.New(40, 5),
 		width:          120,
 		height:         20,
 	}
@@ -544,6 +582,41 @@ func TestModelViewShowsBranchLabels(t *testing.T) {
 	}
 	if !strings.Contains(view, "THEIRS (feature/add-auth)") {
 		t.Fatalf("expected THEIRS (feature/add-auth) in view, got:\n%s", view)
+	}
+}
+
+func TestModelViewTruncatesLongBranchLabels(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	state, err := engine.NewState(doc)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+	longLabel := "/var/folders/n5/10r8gvt52mq58dpz62c7_jt00000gn/T/ec-local-766054358"
+	m := model{
+		ready:           true,
+		opts:            cliOptionsWithMergedPath("merged.txt"),
+		state:           state,
+		doc:             doc,
+		currentConflict: 0,
+		selectedSide:    selectedOurs,
+		mergedLabels: []conflictLabels{
+			{OursLabel: longLabel, TheirsLabel: longLabel},
+		},
+		manualResolved: map[int][]byte{},
+		viewportOurs:   viewport.New(10, 5),
+		viewportResult: viewport.New(10, 5),
+		viewportTheirs: viewport.New(10, 5),
+		width:          90,
+		height:         20,
+	}
+	m.updateViewports()
+
+	view := m.View()
+	if strings.Contains(view, longLabel) {
+		t.Fatalf("expected long labels to be truncated, got:\n%s", view)
+	}
+	if !strings.Contains(view, "...") {
+		t.Fatalf("expected truncated labels with ellipsis, got:\n%s", view)
 	}
 }
 
