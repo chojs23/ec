@@ -534,9 +534,9 @@ func TestModelViewReady(t *testing.T) {
 		currentConflict: 0,
 		selectedSide:    selectedOurs,
 		manualResolved:  map[int][]byte{},
-		viewportOurs:    viewport.New(10, 5),
-		viewportResult:  viewport.New(10, 5),
-		viewportTheirs:  viewport.New(10, 5),
+		viewportOurs:    viewport.New(40, 5),
+		viewportResult:  viewport.New(40, 5),
+		viewportTheirs:  viewport.New(40, 5),
 		width:           80,
 		height:          20,
 	}
