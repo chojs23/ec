@@ -1436,6 +1436,11 @@ func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.D
 				if nextIdx == -1 {
 					nextIdx = findApproxSubslice(mergedLines, searchPos, nextTextLines)
 				}
+				if nextIdx == searchPos && textLinesBlankOnly(nextTextLines) {
+					if fallbackIdx := findNextConflictBoundary(mergedLines, searchPos, doc.Segments, i+1); fallbackIdx > searchPos {
+						nextIdx = fallbackIdx
+					}
+				}
 			}
 			if nextIdx == -1 {
 				nextIdx = len(mergedLines)
@@ -1486,14 +1491,23 @@ func classifyConflictSpan(spanLines [][]byte, pendingTextLines [][]byte, seg mar
 	if len(spanLines) == 0 {
 		return 0, 0, inferEmptyOutputResolution(seg), nil, conflictLabels{}, false
 	}
+	if textLinesBlankOnly(spanLines) {
+		return len(spanLines), len(spanLines), inferEmptyOutputResolution(seg), nil, conflictLabels{}, false
+	}
 
 	if matchStart, matchEnd, resolution, ok := findBestResolutionMatch(spanLines, seg); ok {
 		return matchStart, matchEnd, resolution, nil, conflictLabels{}, false
 	}
 
-	manualStart := detectManualStart(spanLines, pendingTextLines)
+	manualStart, manualExact := detectManualStart(spanLines, pendingTextLines)
+	if manualStart < len(spanLines) && textLinesBlankOnly(spanLines[manualStart:]) {
+		return len(spanLines), len(spanLines), inferEmptyOutputResolution(seg), nil, conflictLabels{}, false
+	}
 	if manualStart == len(spanLines) {
-		return manualStart, len(spanLines), inferEmptyOutputResolution(seg), nil, conflictLabels{}, false
+		if manualExact && (!textLinesBlankOnly(pendingTextLines) || textLinesBlankOnly(spanLines)) {
+			return manualStart, len(spanLines), inferEmptyOutputResolution(seg), nil, conflictLabels{}, false
+		}
+		return 0, len(spanLines), markers.ResolutionUnset, bytes.Join(spanLines, nil), conflictLabels{}, false
 	}
 	return manualStart, len(spanLines), markers.ResolutionUnset, bytes.Join(spanLines[manualStart:], nil), conflictLabels{}, false
 }
@@ -1512,17 +1526,17 @@ func inferEmptyOutputResolution(seg markers.ConflictSegment) markers.Resolution 
 	return markers.ResolutionNone
 }
 
-func detectManualStart(spanLines [][]byte, pendingTextLines [][]byte) int {
+func detectManualStart(spanLines [][]byte, pendingTextLines [][]byte) (int, bool) {
 	if len(spanLines) == 0 || len(pendingTextLines) == 0 {
-		return 0
+		return 0, false
 	}
 
 	if idx := findSubslice(spanLines, 0, pendingTextLines); idx != -1 {
 		start := idx + len(pendingTextLines)
 		if start > len(spanLines) {
-			return len(spanLines)
+			return len(spanLines), true
 		}
-		return start
+		return start, true
 	}
 
 	if idx := findApproxSubslice(spanLines, 0, pendingTextLines); idx != -1 {
@@ -1533,10 +1547,10 @@ func detectManualStart(spanLines [][]byte, pendingTextLines [][]byte) int {
 		if start > len(spanLines) {
 			start = len(spanLines)
 		}
-		return start
+		return start, false
 	}
 
-	return 0
+	return 0, false
 }
 
 func locateConflictMarkerSpan(lines [][]byte) (int, int, bool) {
@@ -1841,6 +1855,76 @@ func labelsFromConflictSpan(lines [][]byte) conflictLabels {
 		}
 	}
 	return labels
+}
+
+func textLinesBlankOnly(lines [][]byte) bool {
+	if len(lines) == 0 {
+		return false
+	}
+
+	for _, line := range lines {
+		if len(bytes.TrimSpace(line)) != 0 {
+			return false
+		}
+	}
+
+	return true
+}
+
+func findNextConflictBoundary(mergedLines [][]byte, start int, segments []markers.Segment, segmentStart int) int {
+	best := findConflictMarkerLineIndex(mergedLines, start)
+
+	nextConflict, ok := nextConflictSegment(segments, segmentStart)
+	if !ok {
+		return best
+	}
+
+	for _, candidate := range conflictMatchCandidates(nextConflict) {
+		if len(candidate) == 0 {
+			continue
+		}
+		idx := findSubslice(mergedLines, start, candidate)
+		if idx == -1 {
+			continue
+		}
+		if best == -1 || idx < best {
+			best = idx
+		}
+	}
+
+	return best
+}
+
+func nextConflictSegment(segments []markers.Segment, start int) (markers.ConflictSegment, bool) {
+	for i := start; i < len(segments); i++ {
+		if seg, ok := segments[i].(markers.ConflictSegment); ok {
+			return seg, true
+		}
+	}
+
+	return markers.ConflictSegment{}, false
+}
+
+func conflictMatchCandidates(seg markers.ConflictSegment) [][][]byte {
+	ours := markers.SplitLinesKeepEOL(seg.Ours)
+	theirs := markers.SplitLinesKeepEOL(seg.Theirs)
+	both := append(append([][]byte{}, ours...), theirs...)
+
+	return [][][]byte{ours, theirs, both}
+}
+
+func findConflictMarkerLineIndex(lines [][]byte, start int) int {
+	if start < 0 {
+		start = 0
+	}
+
+	for i := start; i < len(lines); i++ {
+		if bytes.HasPrefix(lines[i], []byte("<<<<<<<")) {
+			return i
+		}
+	}
+
+	return -1
 }
 
 func nextTextSegmentLines(segments []markers.Segment, start int) [][]byte {

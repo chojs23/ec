@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"testing"
 
 	"github.com/chojs23/ec/internal/markers"
@@ -193,8 +194,8 @@ func TestApplyMergedResolutionsHandlesEditedSingleLineSeparator(t *testing.T) {
 	}
 }
 
-func TestApplyMergedResolutionsWitrLicenseScenario(t *testing.T) {
-	diff3 := []byte("                                 Apache License\n" +
+func witrLicenseDiff3Fixture() []byte {
+	return []byte("                                 Apache License\n" +
 		"                           Version 2.0, January 2004\n" +
 		"                        http://www.apache.org/licenses/\n" +
 		"\n" +
@@ -242,6 +243,10 @@ func TestApplyMergedResolutionsWitrLicenseScenario(t *testing.T) {
 		">>>>>>> branch\n" +
 		"      including but not limited to software source code, documentation\n" +
 		"      source, and configuration files.\n")
+}
+
+func TestApplyMergedResolutionsWitrLicenseScenario(t *testing.T) {
+	diff3 := witrLicenseDiff3Fixture()
 
 	doc, err := markers.Parse(diff3)
 	if err != nil {
@@ -302,7 +307,121 @@ func TestApplyMergedResolutionsWitrLicenseScenario(t *testing.T) {
 		t.Fatalf("expected fully resolved output")
 	}
 	if string(rendered) != string(merged) {
+		t.Fatalf("rendered merged output mismatch:\nrendered=%q\nmerged=%q", string(rendered), string(merged))
+	}
+}
+
+func TestApplyMergedResolutionsWitrLicensePartialConflictStaysManual(t *testing.T) {
+	doc, err := markers.Parse(witrLicenseDiff3Fixture())
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	merged := []byte("                                 Apache License\n" +
+		"                           Version 2.0, January 2004\n" +
+		"                        http://www.apache.org/licenses/\n" +
+		"\n" +
+		"   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION\n" +
+		"\n" +
+		"   1. Definitions.\n" +
+		"\n" +
+		"      \"License\" shall mean the terms and conditions for use, reproduction,\n" +
+		"      and distribution as defined by Sections 1 through 9 of this document.\n" +
+		"\n" +
+		"      \"Licensor\" shall mean the copyright owner or entity authorized by\n" +
+		"      the copyright owner that is granting the License.B@#\n" +
+		"\n" +
+		"      \"Legal Entity\" shall mean the union of the acting entity and all\n" +
+		"      other entities that control, are controlled by, or are under common\n" +
+		"      control with that entity. For the purposes of this definition,\n" +
+		"      outstanding shares, or (iii) beneficial ownership of such entity.A\n" +
+		"\n" +
+		"\n" +
+		"\n" +
+		"\n" +
+		"\n" +
+		"\n" +
+		"      \"You\" (or \"Your\") shall mean an individual or Legal Entity\n" +
+		"\n" +
+		"\n" +
+		"\n" +
+		"\n" +
+		"\n" +
+		"\n" +
+		"asdsadf\n" +
+		"      \"Source\" form shall mean the preferred form for making modifications,\n" +
+		"      including but not limited to software source code, documentation\n" +
+		"      source, and configuration files.\n")
+
+	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
+	if err != nil {
+		t.Fatalf("applyMergedResolutions error: %v", err)
+	}
+	if len(manual) != 1 {
+		t.Fatalf("manualResolved len = %d, want 1", len(manual))
+	}
+
+	if got := conflictSegment(t, updated, 1).Resolution; got != markers.ResolutionUnset {
+		t.Fatalf("conflict 1 resolution = %q, want unset for manual conflict", got)
+	}
+	if got := conflictSegment(t, updated, 2).Resolution; got != markers.ResolutionTheirs {
+		t.Fatalf("conflict 2 resolution = %q, want %q", got, markers.ResolutionTheirs)
+	}
+
+	manualBytes, ok := manual[1]
+	if !ok {
+		t.Fatalf("expected manual resolution for conflict 1")
+	}
+	if !bytes.Contains(manualBytes, []byte("\"You\" (or \"Your\") shall mean an individual or Legal Entity\n")) {
+		t.Fatalf("manual conflict missing kept LICENSE line: %q", string(manualBytes))
+	}
+	if bytes.Contains(manualBytes, []byte("asdsadf\n")) {
+		t.Fatalf("manual conflict consumed next conflict output: %q", string(manualBytes))
+	}
+
+	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	if err != nil {
+		t.Fatalf("renderMergedOutput error: %v", err)
+	}
+	if unresolved {
+		t.Fatalf("expected fully resolved output")
+	}
+	if string(rendered) != string(merged) {
 		t.Fatalf("rendered merged output mismatch")
+	}
+}
+
+func TestApplyMergedResolutionsKeepsTrueEmptyConflictWithBlankSeparator(t *testing.T) {
+	data := []byte("start\n<<<<<<< HEAD\nours1\n=======\ntheirs1\n>>>>>>> branch\n\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nend\n")
+	doc, err := markers.Parse(data)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	merged := []byte("start\n\ntheirs2\nend\n")
+	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
+	if err != nil {
+		t.Fatalf("applyMergedResolutions error: %v", err)
+	}
+	if len(manual) != 0 {
+		t.Fatalf("expected no manual resolutions, got %d: manual=%v", len(manual), manual)
+	}
+	if got := conflictSegment(t, updated, 0).Resolution; got != markers.ResolutionNone {
+		t.Fatalf("conflict 0 resolution = %q, want %q", got, markers.ResolutionNone)
+	}
+	if got := conflictSegment(t, updated, 1).Resolution; got != markers.ResolutionTheirs {
+		t.Fatalf("conflict 1 resolution = %q, want %q", got, markers.ResolutionTheirs)
+	}
+
+	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	if err != nil {
+		t.Fatalf("renderMergedOutput error: %v", err)
+	}
+	if unresolved {
+		t.Fatalf("expected fully resolved output")
+	}
+	if string(rendered) != string(merged) {
+		t.Fatalf("rendered = %q, want %q", string(rendered), string(merged))
 	}
 }
 
