@@ -1445,17 +1445,23 @@ func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.D
 			if nextIdx == -1 {
 				nextIdx = len(mergedLines)
 			}
-			if nextIdx < pos {
+
+			conflictPos := pos
+			if textAlignedBeforeConflict(mergedLines, pos, searchPos, pendingTextLines) {
+				conflictPos = searchPos
+			}
+
+			if nextIdx < conflictPos {
 				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("failed to align conflict segment")
 			}
-			spanLines := mergedLines[pos:nextIdx]
+			spanLines := mergedLines[conflictPos:nextIdx]
 
 			start, end, resolution, manualBytes, labels, labelsKnown := classifyConflictSpan(spanLines, pendingTextLines, s)
 			if start < 0 || end < start || end > len(spanLines) {
 				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("internal: invalid conflict span classification")
 			}
 
-			if err := setPendingText(pos + start); err != nil {
+			if err := setPendingText(conflictPos + start); err != nil {
 				return doc, manualResolved, alignedLabels, alignedLabelKnown, err
 			}
 
@@ -1471,7 +1477,7 @@ func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.D
 				doc.Segments[i] = s
 			}
 
-			pos += end
+			pos = conflictPos + end
 		}
 	}
 
@@ -1699,6 +1705,27 @@ func findApproxLineIndex(lines [][]byte, start int, needle []byte) int {
 	}
 
 	return -1
+}
+
+func textAlignedBeforeConflict(mergedLines [][]byte, pos int, searchPos int, pendingTextLines [][]byte) bool {
+	if pos < 0 || searchPos <= pos || searchPos > len(mergedLines) {
+		return false
+	}
+
+	alignedLines := mergedLines[pos:searchPos]
+	if len(alignedLines) == 0 || len(alignedLines) > len(pendingTextLines) {
+		return false
+	}
+
+	if idx := findSubslice(pendingTextLines, 0, alignedLines); idx != -1 {
+		return true
+	}
+
+	if idx := findApproxSubslice(pendingTextLines, 0, alignedLines); idx != -1 {
+		return true
+	}
+
+	return false
 }
 
 func alignTextSegmentEnd(mergedLines [][]byte, start int, textLines [][]byte) int {
