@@ -21,14 +21,7 @@ func TestConnectorForResult(t *testing.T) {
 
 func TestBuildResultLinesManualResolved(t *testing.T) {
 	input := []byte("start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nend\n")
-	doc, err := markers.Parse(input)
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-	session, err := mergeview.SessionFromDocument(doc)
-	if err != nil {
-		t.Fatalf("SessionFromDocument error = %v", err)
-	}
+	session := parseSessionText(t, input)
 	manual := map[int][]byte{0: []byte("manual\n")}
 	lines, _ := buildResultLinesSession(session, 0, selectedOurs, manual)
 	if len(lines) == 0 {
@@ -51,10 +44,7 @@ func TestBuildResultLinesManualResolved(t *testing.T) {
 
 func TestApplyMergedResolutionsManualHunk(t *testing.T) {
 	diff3 := []byte("header\n<<<<<<< HEAD\nours1\n||||||| base\nbase1\n=======\ntheirs1\n>>>>>>> branch\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nfooter\n")
-	doc, err := markers.Parse(diff3)
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
+	doc := parseSessionText(t, diff3)
 
 	merged := []byte("header\nmanual1\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nfooter\n")
 	updated, manual, _, _ := replayMergedSession(t, doc, merged)
@@ -114,20 +104,13 @@ func TestMarkConflictedInRanges(t *testing.T) {
 
 func TestBuildPaneLinesFromEntriesMarkers(t *testing.T) {
 	data := []byte("start\n<<<<<<< HEAD\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> branch\nend\n")
-	doc, err := markers.Parse(data)
-	if err != nil {
-		t.Fatalf("Parse error: %v", err)
-	}
-	session, err := mergeview.SessionFromDocument(doc)
-	if err != nil {
-		t.Fatalf("SessionFromDocument error: %v", err)
-	}
+	session := parseSessionText(t, data)
 
 	baseLines := []string{"start", "base", "end"}
 	oursLines := []string{"start", "ours", "end"}
 	theirsLines := []string{"start", "theirs", "end"}
 
-	ranges, ok := computeConflictRanges(doc, baseLines, oursLines, theirsLines)
+	ranges, ok := computeConflictRangesSession(session, baseLines, oursLines, theirsLines)
 	if !ok {
 		t.Fatalf("computeConflictRanges failed")
 	}
@@ -151,16 +134,12 @@ func TestBuildPaneLinesFromEntriesMarkers(t *testing.T) {
 }
 
 func TestBuildPaneLinesFromEntriesUsesSideRangeForNonRemoved(t *testing.T) {
-	doc := markers.Document{
-		Segments: []markers.Segment{
-			markers.TextSegment{Bytes: []byte("header\n")},
-			markers.ConflictSegment{Ours: []byte("ours\n"), Theirs: []byte("theirs\n")},
+	session := &mergeview.Session{
+		Segments: []mergeview.Segment{
+			mergeview.TextSegment{Bytes: []byte("header\n")},
+			mergeview.ConflictBlock{Ours: []byte("ours\n"), Theirs: []byte("theirs\n")},
 		},
-		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
-	}
-	session, err := mergeview.SessionFromDocument(doc)
-	if err != nil {
-		t.Fatalf("SessionFromDocument error: %v", err)
+		Conflicts: []mergeview.ConflictRef{{SegmentIndex: 1}},
 	}
 
 	entries := []lineEntry{
@@ -228,22 +207,13 @@ func TestBuildResultLinesFromEntriesUnresolvedRange(t *testing.T) {
 }
 
 func TestBuildResultPreviewLinesUsesSelection(t *testing.T) {
-	doc := markers.Document{
-		Segments: []markers.Segment{
-			markers.TextSegment{Bytes: []byte("start\n")},
-			markers.ConflictSegment{
-				Ours:   []byte("ours\n"),
-				Base:   []byte("base\n"),
-				Theirs: []byte("theirs\n"),
-			},
-			markers.TextSegment{Bytes: []byte("end\n")},
+	session := &mergeview.Session{
+		Segments: []mergeview.Segment{
+			mergeview.TextSegment{Bytes: []byte("start\n")},
+			mergeview.ConflictBlock{Ours: []byte("ours\n"), Base: []byte("base\n"), Theirs: []byte("theirs\n")},
+			mergeview.TextSegment{Bytes: []byte("end\n")},
 		},
-		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
-	}
-
-	session, err := mergeview.SessionFromDocument(doc)
-	if err != nil {
-		t.Fatalf("SessionFromDocument error: %v", err)
+		Conflicts: []mergeview.ConflictRef{{SegmentIndex: 1}},
 	}
 	lines, forced, ranges := buildResultPreviewLinesSession(session, selectedTheirs, nil, 0)
 	if len(forced) != 0 {
@@ -261,29 +231,16 @@ func TestBuildResultPreviewLinesUsesSelection(t *testing.T) {
 }
 
 func TestBuildResultPreviewLinesManualAndNone(t *testing.T) {
-	doc := markers.Document{
-		Segments: []markers.Segment{
-			markers.TextSegment{Bytes: []byte("start\n")},
-			markers.ConflictSegment{
-				Ours:   []byte("ours\n"),
-				Base:   []byte("base\n"),
-				Theirs: []byte("theirs\n"),
-			},
-			markers.TextSegment{Bytes: []byte("middle\n")},
-			markers.ConflictSegment{
-				Ours:       []byte("o2\n"),
-				Theirs:     []byte("t2\n"),
-				Resolution: markers.ResolutionNone,
-			},
-			markers.TextSegment{Bytes: []byte("end\n")},
-		},
-		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}, {SegmentIndex: 3}},
-	}
-
 	manual := map[int][]byte{0: []byte("manual\n")}
-	session, err := mergeview.SessionFromDocument(doc)
-	if err != nil {
-		t.Fatalf("SessionFromDocument error: %v", err)
+	session := &mergeview.Session{
+		Segments: []mergeview.Segment{
+			mergeview.TextSegment{Bytes: []byte("start\n")},
+			mergeview.ConflictBlock{Ours: []byte("ours\n"), Base: []byte("base\n"), Theirs: []byte("theirs\n")},
+			mergeview.TextSegment{Bytes: []byte("middle\n")},
+			mergeview.ConflictBlock{Ours: []byte("o2\n"), Theirs: []byte("t2\n"), Resolution: markers.ResolutionNone},
+			mergeview.TextSegment{Bytes: []byte("end\n")},
+		},
+		Conflicts: []mergeview.ConflictRef{{SegmentIndex: 1}, {SegmentIndex: 3}},
 	}
 	lines, forced, ranges := buildResultPreviewLinesSession(session, selectedOurs, manual, 1)
 	if len(lines) != 5 {

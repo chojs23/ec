@@ -12,15 +12,6 @@ type State struct {
 	session *mergeview.Session
 }
 
-// NewState creates a new State from a parsed document.
-func NewState(doc markers.Document) (*State, error) {
-	session, err := mergeview.SessionFromDocument(doc)
-	if err != nil {
-		return nil, err
-	}
-	return NewStateFromSession(session)
-}
-
 func NewStateFromSession(session *mergeview.Session) (*State, error) {
 	return &State{
 		session: session.Clone(),
@@ -42,16 +33,6 @@ func (s *State) ApplyAll(resolution markers.Resolution) error {
 	return s.session.ApplyAll(resolution)
 }
 
-// ReplaceDocument replaces the current document.
-func (s *State) ReplaceDocument(doc markers.Document) {
-	updated, err := mergeview.SessionFromDocument(doc)
-	if err != nil {
-		return
-	}
-	s.ReplaceSession(updated)
-	return
-}
-
 func (s *State) ReplaceSession(session *mergeview.Session) {
 	if mergeview.SessionsEqual(s.session, session) {
 		return
@@ -64,10 +45,6 @@ func (s *State) ReplaceSession(session *mergeview.Session) {
 // Returns error if any conflict is unresolved.
 func (s *State) Preview() ([]byte, error) {
 	return s.session.Preview()
-}
-
-func (s *State) Document() markers.Document {
-	return s.session.Document()
 }
 
 func (s *State) Session() *mergeview.Session {

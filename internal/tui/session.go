@@ -6,13 +6,11 @@ import (
 	"os"
 
 	"github.com/chojs23/ec/internal/cli"
-	"github.com/chojs23/ec/internal/markers"
 	"github.com/chojs23/ec/internal/mergeview"
 )
 
 type resolverDocumentState struct {
 	session          *mergeview.Session
-	doc              markers.Document
 	manualResolved   map[int][]byte
 	mergedLabels     []conflictLabels
 	mergedLabelKnown []bool
@@ -23,14 +21,11 @@ func loadResolverDocumentState(ctx context.Context, opts cli.Options) (resolverD
 	if err != nil {
 		return resolverDocumentState{}, err
 	}
-	canonicalDoc := canonicalSession.Document()
-
 	state := resolverDocumentState{
 		session:          canonicalSession,
-		doc:              canonicalDoc,
 		manualResolved:   map[int][]byte{},
-		mergedLabels:     make([]conflictLabels, len(canonicalDoc.Conflicts)),
-		mergedLabelKnown: make([]bool, len(canonicalDoc.Conflicts)),
+		mergedLabels:     make([]conflictLabels, len(canonicalSession.Conflicts)),
+		mergedLabelKnown: make([]bool, len(canonicalSession.Conflicts)),
 	}
 
 	mergedBytes, err := os.ReadFile(opts.MergedPath)
@@ -44,7 +39,6 @@ func loadResolverDocumentState(ctx context.Context, opts cli.Options) (resolverD
 	}
 
 	state.session = replayedSession
-	state.doc = replayedSession.Document()
 	state.manualResolved = manual
 	state.mergedLabels = labels
 	state.mergedLabelKnown = known

@@ -48,16 +48,13 @@ func TestModelWriteDoesNotQuit(t *testing.T) {
 		t.Fatalf("WriteFile error = %v", err)
 	}
 
-	doc := markers.Document{Segments: []markers.Segment{markers.TextSegment{Bytes: []byte("resolved\n")}}}
-	state, err := engine.NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState error = %v", err)
-	}
+	session := &mergeview.Session{Segments: []mergeview.Segment{mergeview.TextSegment{Bytes: []byte("resolved\n")}}}
+	state := stateFromFixture(t, session)
 
 	m := model{
-		state: state,
-		doc:   doc,
-		opts:  cliOptionsWithMergedPath(path),
+		state:   state,
+		session: state.Session(),
+		opts:    cliOptionsWithMergedPath(path),
 	}
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
@@ -92,15 +89,12 @@ func TestOpenEditorWithUnresolvedConflicts(t *testing.T) {
 		t.Fatalf("ReadFile error = %v", err)
 	}
 
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error = %v", err)
 	}
 
-	state, err := engine.NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState error = %v", err)
-	}
+	state := stateFromFixture(t, doc)
 
 	editorPath := filepath.Join(tmpDir, "editor.sh")
 	if err := os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -135,15 +129,12 @@ func TestOpenEditorUsesManualResolvedPreview(t *testing.T) {
 		t.Fatalf("WriteFile error = %v", err)
 	}
 
-	doc, err := markers.Parse(conflicted)
+	doc, err := mergeview.ParseSession(conflicted)
 	if err != nil {
 		t.Fatalf("Parse error = %v", err)
 	}
 
-	state, err := engine.NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState error = %v", err)
-	}
+	state := stateFromFixture(t, doc)
 
 	editorPath := filepath.Join(tmpDir, "editor.sh")
 	if err := os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -158,7 +149,7 @@ func TestOpenEditorUsesManualResolvedPreview(t *testing.T) {
 
 	m := model{
 		state:          state,
-		doc:            doc,
+		session:        state.Session(),
 		manualResolved: map[int][]byte{0: []byte("manual\n")},
 		opts:           cliOptionsWithMergedPath(mergedPath),
 	}
@@ -223,21 +214,18 @@ func TestReloadFromFilePreservesManualResolution(t *testing.T) {
 		t.Fatalf("MergeFileDiff3 failed: %v", err)
 	}
 
-	doc, err := markers.Parse(diff3Bytes)
+	doc, err := mergeview.ParseSession(diff3Bytes)
 	if err != nil {
 		t.Fatalf("Parse error = %v", err)
 	}
 
-	state, err := engine.NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState error = %v", err)
-	}
+	state := stateFromFixture(t, doc)
 
 	m := model{
-		ctx:   ctx,
-		opts:  opts,
-		state: state,
-		doc:   doc,
+		ctx:     ctx,
+		opts:    opts,
+		state:   state,
+		session: state.Session(),
 	}
 
 	if err := m.reloadFromFile(); err != nil {
@@ -315,19 +303,19 @@ func TestLoadResolverDocumentStateKeepsCanonicalConflictStructureWithMergedMarke
 	if len(state.manualResolved) != 0 {
 		t.Fatalf("manualResolved = %d, want 0", len(state.manualResolved))
 	}
-	if len(state.doc.Conflicts) != 1 {
-		t.Fatalf("conflicts = %d, want 1", len(state.doc.Conflicts))
+	if len(state.session.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1", len(state.session.Conflicts))
 	}
 
-	intro, ok := state.doc.Segments[0].(markers.TextSegment)
+	intro, ok := state.session.Segments[0].(mergeview.TextSegment)
 	if !ok {
-		t.Fatalf("segment 0 = %T, want TextSegment", state.doc.Segments[0])
+		t.Fatalf("segment 0 = %T, want TextSegment", state.session.Segments[0])
 	}
 	if string(intro.Bytes) != "intro edited\n" {
 		t.Fatalf("intro text = %q", string(intro.Bytes))
 	}
 
-	seg := conflictSegment(t, state.doc, 0)
+	seg := conflictBlock(t, state.session, 0)
 	if string(seg.Ours) != "local line\n" {
 		t.Fatalf("seg.Ours = %q", string(seg.Ours))
 	}
@@ -344,9 +332,9 @@ func TestLoadResolverDocumentStateKeepsCanonicalConflictStructureWithMergedMarke
 		t.Fatalf("mergedLabels[0] = %+v", state.mergedLabels[0])
 	}
 
-	outro, ok := state.doc.Segments[2].(markers.TextSegment)
+	outro, ok := state.session.Segments[2].(mergeview.TextSegment)
 	if !ok {
-		t.Fatalf("segment 2 = %T, want TextSegment", state.doc.Segments[2])
+		t.Fatalf("segment 2 = %T, want TextSegment", state.session.Segments[2])
 	}
 	if string(outro.Bytes) != "outro edited\n" {
 		t.Fatalf("outro text = %q", string(outro.Bytes))
@@ -396,21 +384,21 @@ func TestLoadResolverDocumentStateFallsBackForMixedResolvedMergedFile(t *testing
 	if err != nil {
 		t.Fatalf("loadResolverDocumentState error = %v", err)
 	}
-	if len(state.doc.Conflicts) != 2 {
-		t.Fatalf("conflicts = %d, want 2", len(state.doc.Conflicts))
+	if len(state.session.Conflicts) != 2 {
+		t.Fatalf("conflicts = %d, want 2", len(state.session.Conflicts))
 	}
-	first := conflictSegment(t, state.doc, 0)
+	first := conflictBlock(t, state.session, 0)
 	if first.Resolution != markers.ResolutionOurs {
 		t.Fatalf("first resolution = %q, want %q", first.Resolution, markers.ResolutionOurs)
 	}
-	middleText, ok := state.doc.Segments[2].(markers.TextSegment)
+	middleText, ok := state.session.Segments[2].(mergeview.TextSegment)
 	if !ok {
-		t.Fatalf("segment 2 = %T, want TextSegment", state.doc.Segments[2])
+		t.Fatalf("segment 2 = %T, want TextSegment", state.session.Segments[2])
 	}
 	if string(middleText.Bytes) != "middle\n" {
 		t.Fatalf("middle text = %q", string(middleText.Bytes))
 	}
-	second := conflictSegment(t, state.doc, 1)
+	second := conflictBlock(t, state.session, 1)
 	if second.Resolution != markers.ResolutionUnset {
 		t.Fatalf("second resolution = %q, want unset", second.Resolution)
 	}
@@ -451,40 +439,40 @@ func TestReloadFromFileKeepsCanonicalConflictStructureWithMergedMarkers(t *testi
 		t.Fatal(err)
 	}
 
-	canonicalDoc, err := mergeview.LoadCanonicalDocument(ctx, cli.Options{
+	canonicalSession, err := mergeview.LoadCanonicalSession(ctx, cli.Options{
 		BasePath:   basePath,
 		LocalPath:  localPath,
 		RemotePath: remotePath,
 		MergedPath: mergedPath,
 	})
 	if err != nil {
-		t.Fatalf("LoadCanonicalDocument error = %v", err)
+		t.Fatalf("LoadCanonicalSession error = %v", err)
 	}
-	resolverState, err := engine.NewState(canonicalDoc)
+	resolverState, err := engine.NewStateFromSession(canonicalSession)
 	if err != nil {
-		t.Fatalf("NewState error = %v", err)
+		t.Fatalf("NewStateFromSession error = %v", err)
 	}
 
 	m := model{
-		ctx:   ctx,
-		opts:  cli.Options{BasePath: basePath, LocalPath: localPath, RemotePath: remotePath, MergedPath: mergedPath},
-		state: resolverState,
-		doc:   canonicalDoc,
+		ctx:     ctx,
+		opts:    cli.Options{BasePath: basePath, LocalPath: localPath, RemotePath: remotePath, MergedPath: mergedPath},
+		state:   resolverState,
+		session: resolverState.Session(),
 	}
 
 	if err := m.reloadFromFile(); err != nil {
 		t.Fatalf("reloadFromFile error = %v", err)
 	}
 
-	intro, ok := m.doc.Segments[0].(markers.TextSegment)
+	intro, ok := m.session.Segments[0].(mergeview.TextSegment)
 	if !ok {
-		t.Fatalf("segment 0 = %T, want TextSegment", m.doc.Segments[0])
+		t.Fatalf("segment 0 = %T, want TextSegment", m.session.Segments[0])
 	}
 	if string(intro.Bytes) != "intro edited\n" {
 		t.Fatalf("intro text = %q", string(intro.Bytes))
 	}
 
-	seg := conflictSegment(t, m.doc, 0)
+	seg := conflictBlock(t, m.session, 0)
 	if string(seg.Ours) != "local line\n" {
 		t.Fatalf("seg.Ours = %q", string(seg.Ours))
 	}
@@ -548,21 +536,18 @@ func TestReloadFromFileKeepsExistingUndoHistory(t *testing.T) {
 		t.Fatalf("MergeFileDiff3 failed: %v", err)
 	}
 
-	doc, err := markers.Parse(diff3Bytes)
+	doc, err := mergeview.ParseSession(diff3Bytes)
 	if err != nil {
 		t.Fatalf("Parse error = %v", err)
 	}
 
-	state, err := engine.NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState error = %v", err)
-	}
+	state := stateFromFixture(t, doc)
 
 	m := model{
-		ctx:   ctx,
-		opts:  opts,
-		state: state,
-		doc:   doc,
+		ctx:     ctx,
+		opts:    opts,
+		state:   state,
+		session: state.Session(),
 	}
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
@@ -747,8 +732,8 @@ func TestModelViewQuittingStates(t *testing.T) {
 }
 
 func TestModelViewNoConflicts(t *testing.T) {
-	doc := markers.Document{Segments: []markers.Segment{markers.TextSegment{Bytes: []byte("hello\n")}}}
-	m := model{ready: true, doc: doc, opts: cliOptionsWithMergedPath("merged.txt")}
+	session := &mergeview.Session{Segments: []mergeview.Segment{mergeview.TextSegment{Bytes: []byte("hello\n")}}}
+	m := model{ready: true, session: session, opts: cliOptionsWithMergedPath("merged.txt")}
 	if !strings.Contains(m.View(), "No conflicts found") {
 		t.Fatalf("expected no conflicts view")
 	}
@@ -756,15 +741,12 @@ func TestModelViewNoConflicts(t *testing.T) {
 
 func TestModelViewReady(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	state, err := engine.NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState error = %v", err)
-	}
+	state := stateFromFixture(t, doc)
 	m := model{
 		ready:           true,
 		opts:            cliOptionsWithMergedPath("merged.txt"),
 		state:           state,
-		doc:             doc,
+		session:         state.Session(),
 		currentConflict: 0,
 		selectedSide:    selectedOurs,
 		manualResolved:  map[int][]byte{},
@@ -787,15 +769,12 @@ func TestModelViewReady(t *testing.T) {
 
 func TestModelViewShowsBranchLabels(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	state, err := engine.NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState error = %v", err)
-	}
+	state := stateFromFixture(t, doc)
 	m := model{
 		ready:           true,
 		opts:            cliOptionsWithMergedPath("merged.txt"),
 		state:           state,
-		doc:             doc,
+		session:         state.Session(),
 		currentConflict: 0,
 		selectedSide:    selectedOurs,
 		mergedLabels: []conflictLabels{
@@ -821,16 +800,13 @@ func TestModelViewShowsBranchLabels(t *testing.T) {
 
 func TestModelViewTruncatesLongBranchLabels(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	state, err := engine.NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState error = %v", err)
-	}
+	state := stateFromFixture(t, doc)
 	longLabel := "/var/folders/n5/10r8gvt52mq58dpz62c7_jt00000gn/T/ec-local-766054358"
 	m := model{
 		ready:           true,
 		opts:            cliOptionsWithMergedPath("merged.txt"),
 		state:           state,
-		doc:             doc,
+		session:         state.Session(),
 		currentConflict: 0,
 		selectedSide:    selectedOurs,
 		mergedLabels: []conflictLabels{
@@ -856,15 +832,12 @@ func TestModelViewTruncatesLongBranchLabels(t *testing.T) {
 
 func TestModelViewNoLabelsWithoutMergedLabels(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	state, err := engine.NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState error = %v", err)
-	}
+	state := stateFromFixture(t, doc)
 	m := model{
 		ready:           true,
 		opts:            cliOptionsWithMergedPath("merged.txt"),
 		state:           state,
-		doc:             doc,
+		session:         state.Session(),
 		currentConflict: 0,
 		selectedSide:    selectedOurs,
 		manualResolved:  map[int][]byte{},
@@ -957,19 +930,19 @@ func TestUpdateApplyAndUndo(t *testing.T) {
 	if len(applied.manualResolved) != 0 {
 		t.Fatalf("manualResolved len = %d, want 0", len(applied.manualResolved))
 	}
-	if got := conflictResolution(t, applied.doc, 0); got != markers.ResolutionOurs {
+	if got := conflictResolution(t, applied.session, 0); got != markers.ResolutionOurs {
 		t.Fatalf("resolution = %q, want ours", got)
 	}
 
 	updated, _ = applied.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
 	undone := updated.(model)
-	if got := conflictResolution(t, undone.doc, 0); got != markers.ResolutionUnset {
+	if got := conflictResolution(t, undone.session, 0); got != markers.ResolutionUnset {
 		t.Fatalf("resolution = %q, want unset", got)
 	}
 
 	updated, _ = undone.Update(tea.KeyMsg{Type: tea.KeyCtrlR})
 	redone := updated.(model)
-	if got := conflictResolution(t, redone.doc, 0); got != markers.ResolutionOurs {
+	if got := conflictResolution(t, redone.session, 0); got != markers.ResolutionOurs {
 		t.Fatalf("resolution = %q, want ours after redo", got)
 	}
 }
@@ -986,7 +959,7 @@ func TestUpdateApplyUsesResolverUndo(t *testing.T) {
 
 	updated, _ = applied.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'u'}})
 	undone := updated.(model)
-	if got := conflictResolution(t, undone.doc, 0); got != markers.ResolutionUnset {
+	if got := conflictResolution(t, undone.session, 0); got != markers.ResolutionUnset {
 		t.Fatalf("resolution = %q, want unset after undo", got)
 	}
 }
@@ -1001,8 +974,8 @@ func TestUpdateApplyAllClearsManual(t *testing.T) {
 	if len(applied.manualResolved) != 0 {
 		t.Fatalf("manualResolved len = %d, want 0", len(applied.manualResolved))
 	}
-	for i := range applied.doc.Conflicts {
-		if got := conflictResolution(t, applied.doc, i); got != markers.ResolutionOurs {
+	for i := range applied.session.Conflicts {
+		if got := conflictResolution(t, applied.session, i); got != markers.ResolutionOurs {
 			t.Fatalf("conflict %d resolution = %q, want ours", i, got)
 		}
 	}
@@ -1014,7 +987,7 @@ func TestUpdateDiscardSelection(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
 	result := updated.(model)
-	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionNone {
+	if got := conflictResolution(t, result.session, 0); got != markers.ResolutionNone {
 		t.Fatalf("resolution = %q, want none", got)
 	}
 }
@@ -1027,7 +1000,7 @@ func TestUpdateAcceptSelection(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	result := updated.(model)
-	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionTheirs {
+	if got := conflictResolution(t, result.session, 0); got != markers.ResolutionTheirs {
 		t.Fatalf("resolution = %q, want theirs", got)
 	}
 	if len(result.manualResolved) != 0 {
@@ -1060,7 +1033,7 @@ func TestUpdateAcceptSelectionWithSpace(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
 	result := updated.(model)
-	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionTheirs {
+	if got := conflictResolution(t, result.session, 0); got != markers.ResolutionTheirs {
 		t.Fatalf("resolution = %q, want theirs", got)
 	}
 	if len(result.manualResolved) != 0 {
@@ -1075,7 +1048,7 @@ func TestUpdateApplyTheirs(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'t'}})
 	result := updated.(model)
-	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionTheirs {
+	if got := conflictResolution(t, result.session, 0); got != markers.ResolutionTheirs {
 		t.Fatalf("resolution = %q, want theirs", got)
 	}
 	if len(result.manualResolved) != 0 {
@@ -1090,8 +1063,8 @@ func TestUpdateApplyTheirsAll(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
 	result := updated.(model)
-	for i := range result.doc.Conflicts {
-		if got := conflictResolution(t, result.doc, i); got != markers.ResolutionTheirs {
+	for i := range result.session.Conflicts {
+		if got := conflictResolution(t, result.session, i); got != markers.ResolutionTheirs {
 			t.Fatalf("conflict %d resolution = %q, want theirs", i, got)
 		}
 	}
@@ -1106,13 +1079,13 @@ func TestUpdateApplyBothAndNone(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
 	result := updated.(model)
-	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionBoth {
+	if got := conflictResolution(t, result.session, 0); got != markers.ResolutionBoth {
 		t.Fatalf("resolution = %q, want both", got)
 	}
 
 	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
 	result = updated.(model)
-	if got := conflictResolution(t, result.doc, 0); got != markers.ResolutionNone {
+	if got := conflictResolution(t, result.session, 0); got != markers.ResolutionNone {
 		t.Fatalf("resolution = %q, want none", got)
 	}
 }
@@ -1323,16 +1296,13 @@ func TestUpdateWriteKey(t *testing.T) {
 		t.Fatalf("WriteFile error = %v", err)
 	}
 
-	doc := markers.Document{Segments: []markers.Segment{markers.TextSegment{Bytes: []byte("resolved\n")}}}
-	state, err := engine.NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState error = %v", err)
-	}
+	session := &mergeview.Session{Segments: []mergeview.Segment{mergeview.TextSegment{Bytes: []byte("resolved\n")}}}
+	state := stateFromFixture(t, session)
 
 	m := model{
-		state: state,
-		doc:   doc,
-		opts:  cliOptionsWithMergedPath(mergedPath),
+		state:   state,
+		session: state.Session(),
+		opts:    cliOptionsWithMergedPath(mergedPath),
 	}
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'w'}})
@@ -1383,12 +1353,12 @@ func TestUpdateCtrlC(t *testing.T) {
 func TestPrepareFullDiffGuards(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
 
-	_, _, _, _, useFullDiff := prepareFullDiff(doc, cli.Options{AllowMissingBase: true})
+	_, _, _, _, useFullDiff := prepareFullDiff(sessionFromDoc(t, doc), cli.Options{AllowMissingBase: true})
 	if useFullDiff {
 		t.Fatalf("expected useFullDiff false when AllowMissingBase is set")
 	}
 
-	_, _, _, _, useFullDiff = prepareFullDiff(doc, cli.Options{})
+	_, _, _, _, useFullDiff = prepareFullDiff(sessionFromDoc(t, doc), cli.Options{})
 	if useFullDiff {
 		t.Fatalf("expected useFullDiff false when paths are missing")
 	}
@@ -1566,7 +1536,7 @@ func TestPrepareFullDiffLoadFailure(t *testing.T) {
 		LocalPath:  filepath.Join(tmpDir, "missing-local.txt"),
 		RemotePath: filepath.Join(tmpDir, "missing-remote.txt"),
 	}
-	_, _, _, _, useFullDiff := prepareFullDiff(parseSingleConflictDoc(t), opts)
+	_, _, _, _, useFullDiff := prepareFullDiff(sessionFromDoc(t, parseSingleConflictDoc(t)), opts)
 	if useFullDiff {
 		t.Fatalf("expected useFullDiff false when loadLines fails")
 	}
@@ -1589,31 +1559,27 @@ func TestPrepareFullDiffRangeFailure(t *testing.T) {
 	}
 
 	opts := cli.Options{BasePath: basePath, LocalPath: localPath, RemotePath: remotePath}
-	_, _, _, _, useFullDiff := prepareFullDiff(parseSingleConflictDoc(t), opts)
+	_, _, _, _, useFullDiff := prepareFullDiff(sessionFromDoc(t, parseSingleConflictDoc(t)), opts)
 	if useFullDiff {
 		t.Fatalf("expected useFullDiff false when conflict ranges cannot be computed")
 	}
 }
 
-func parseMultiConflictDoc(t *testing.T) markers.Document {
+func parseMultiConflictDoc(t *testing.T) *mergeview.Session {
 	t.Helper()
 	data := []byte("start\n<<<<<<< HEAD\nours1\n=======\ntheirs1\n>>>>>>> branch\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nend\n")
-	doc, err := markers.Parse(data)
-	if err != nil {
-		t.Fatalf("Parse error: %v", err)
-	}
-	return doc
+	return parseSessionText(t, data)
 }
 
-func newModelForDoc(t *testing.T, doc markers.Document) model {
+func newModelForDoc(t *testing.T, session *mergeview.Session) model {
 	t.Helper()
-	state, err := engine.NewState(doc)
+	state, err := engine.NewStateFromSession(session)
 	if err != nil {
-		t.Fatalf("NewState error = %v", err)
+		t.Fatalf("NewStateFromSession error = %v", err)
 	}
 	return model{
 		state:           state,
-		doc:             doc,
+		session:         state.Session(),
 		currentConflict: 0,
 		selectedSide:    selectedOurs,
 		manualResolved:  map[int][]byte{},
@@ -1623,12 +1589,12 @@ func newModelForDoc(t *testing.T, doc markers.Document) model {
 	}
 }
 
-func conflictResolution(t *testing.T, doc markers.Document, index int) markers.Resolution {
+func conflictResolution(t *testing.T, session *mergeview.Session, index int) markers.Resolution {
 	t.Helper()
-	ref := doc.Conflicts[index]
-	seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+	ref := session.Conflicts[index]
+	seg, ok := session.Segments[ref.SegmentIndex].(mergeview.ConflictBlock)
 	if !ok {
-		t.Fatalf("expected conflict segment")
+		t.Fatalf("expected conflict block")
 	}
 	return seg.Resolution
 }
@@ -1760,14 +1726,11 @@ func TestWriteResolvedAllowsUnresolved(t *testing.T) {
 	}
 
 	input := []byte("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n")
-	doc, err := markers.Parse(input)
+	doc, err := mergeview.ParseSession(input)
 	if err != nil {
 		t.Fatalf("Parse error = %v", err)
 	}
-	state, err := engine.NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState error = %v", err)
-	}
+	state := stateFromFixture(t, doc)
 
 	m := model{
 		state: state,
@@ -1795,13 +1758,13 @@ func TestWriteResolvedPreservesMergedLabelsForUnresolved(t *testing.T) {
 	}
 
 	input := []byte("<<<<<<< /tmp/ec-local-123\nours\n=======\ntheirs\n>>>>>>> /tmp/ec-remote-456\n")
-	doc, err := markers.Parse(input)
+	doc, err := mergeview.ParseSession(input)
 	if err != nil {
 		t.Fatalf("Parse error = %v", err)
 	}
-	state, err := engine.NewState(doc)
+	state, err := engine.NewStateFromSession(doc)
 	if err != nil {
-		t.Fatalf("NewState error = %v", err)
+		t.Fatalf("NewStateFromSession error = %v", err)
 	}
 
 	m := model{
@@ -1840,10 +1803,10 @@ func TestWriteResolvedCreatesBackup(t *testing.T) {
 		t.Fatalf("WriteFile error = %v", err)
 	}
 
-	doc := markers.Document{Segments: []markers.Segment{markers.TextSegment{Bytes: []byte("resolved\n")}}}
-	state, err := engine.NewState(doc)
+	session := &mergeview.Session{Segments: []mergeview.Segment{mergeview.TextSegment{Bytes: []byte("resolved\n")}}}
+	state, err := engine.NewStateFromSession(session)
 	if err != nil {
-		t.Fatalf("NewState error = %v", err)
+		t.Fatalf("NewStateFromSession error = %v", err)
 	}
 
 	m := model{

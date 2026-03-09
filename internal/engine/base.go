@@ -5,7 +5,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/chojs23/ec/internal/markers"
+	"github.com/chojs23/ec/internal/mergeview"
 )
 
 // BaseDisplayStrategy defines how base chunks are provided for conflicts.
@@ -15,15 +15,13 @@ const (
 	BaseDisplayExact BaseDisplayStrategy = "exact"
 )
 
-// ValidateBaseCompleteness checks that every conflict in the document has a base chunk.
-// Returns error if any conflict is missing its base section.
-func ValidateBaseCompleteness(doc markers.Document) error {
-	for i, ref := range doc.Conflicts {
-		seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+func ValidateBaseCompletenessSession(session *mergeview.Session) error {
+	for i, ref := range session.Conflicts {
+		block, ok := session.Segments[ref.SegmentIndex].(mergeview.ConflictBlock)
 		if !ok {
-			return fmt.Errorf("internal: conflict %d is not a ConflictSegment", i)
+			return fmt.Errorf("internal: conflict %d is not a ConflictBlock", i)
 		}
-		if len(seg.Base) == 0 && seg.BaseLabel == "" {
+		if len(block.Base) == 0 && block.Labels.BaseLabel == "" {
 			return fmt.Errorf("conflict %d is missing base chunk (base display strategy requires exact base for all conflicts)", i)
 		}
 	}

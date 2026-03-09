@@ -10,12 +10,7 @@ import (
 )
 
 func ReplayMergedResult(session *Session, mergedBytes []byte) (*Session, map[int][]byte, []Labels, []bool, error) {
-	doc := session.Document()
-	updated, manual, labels, known, err := replayMergedDocument(doc, mergedBytes)
-	if err != nil {
-		return nil, nil, nil, nil, err
-	}
-	replayed, err := SessionFromDocument(updated)
+	replayed, manual, labels, known, err := replayMergedSession(session.Clone(), mergedBytes)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -41,16 +36,7 @@ func RenderMergedOutput(session *Session, manualResolved map[int][]byte, mergedL
 			if conflictIndex < len(mergedLabels) && conflictIndex < len(mergedLabelKnown) && mergedLabelKnown[conflictIndex] {
 				labels = mergedLabels[conflictIndex]
 			}
-			markerSeg := markers.ConflictSegment{
-				Ours:        s.Ours,
-				Base:        s.Base,
-				Theirs:      s.Theirs,
-				OursLabel:   labels.OursLabel,
-				BaseLabel:   labels.BaseLabel,
-				TheirsLabel: labels.TheirsLabel,
-				Resolution:  s.Resolution,
-			}
-			if markers.AppendConflictSegment(&out, markerSeg, labels.OursLabel, labels.BaseLabel, labels.TheirsLabel) {
+			if appendConflictBlock(&out, s, labels) {
 				hasUnresolved = true
 			}
 		default:
@@ -74,12 +60,12 @@ func AllResolved(session *Session, manualResolved map[int][]byte) bool {
 	return true
 }
 
-func replayMergedDocument(doc markers.Document, mergedBytes []byte) (markers.Document, map[int][]byte, []Labels, []bool, error) {
+func replayMergedSession(session *Session, mergedBytes []byte) (*Session, map[int][]byte, []Labels, []bool, error) {
 	mergedLines := markers.SplitLinesKeepEOL(mergedBytes)
 	pos := 0
 	manualResolved := map[int][]byte{}
-	alignedLabels := make([]Labels, len(doc.Conflicts))
-	alignedLabelKnown := make([]bool, len(doc.Conflicts))
+	alignedLabels := make([]Labels, len(session.Conflicts))
+	alignedLabelKnown := make([]bool, len(session.Conflicts))
 	conflictIndex := -1
 	pendingTextIndex := -1
 	pendingTextStart := 0
@@ -94,30 +80,30 @@ func replayMergedDocument(doc markers.Document, mergedBytes []byte) (markers.Doc
 		if end > len(mergedLines) {
 			end = len(mergedLines)
 		}
-		textSeg, ok := doc.Segments[pendingTextIndex].(markers.TextSegment)
+		textSeg, ok := session.Segments[pendingTextIndex].(TextSegment)
 		if !ok {
 			return fmt.Errorf("internal: expected text segment at index %d", pendingTextIndex)
 		}
 		textSeg.Bytes = bytes.Join(mergedLines[pendingTextStart:end], nil)
-		doc.Segments[pendingTextIndex] = textSeg
+		session.Segments[pendingTextIndex] = textSeg
 		pendingTextIndex = -1
 		return nil
 	}
 
-	for i, seg := range doc.Segments {
+	for i, seg := range session.Segments {
 		switch s := seg.(type) {
-		case markers.TextSegment:
+		case TextSegment:
 			_ = s
 			pendingTextIndex = i
 			pendingTextStart = pos
-		case markers.ConflictSegment:
+		case ConflictBlock:
 			conflictIndex++
 			searchPos := pos
 			var pendingTextLines [][]byte
 			if pendingTextIndex >= 0 {
-				textSeg, ok := doc.Segments[pendingTextIndex].(markers.TextSegment)
+				textSeg, ok := session.Segments[pendingTextIndex].(TextSegment)
 				if !ok {
-					return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("internal: expected text segment at index %d", pendingTextIndex)
+					return nil, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("internal: expected text segment at index %d", pendingTextIndex)
 				}
 				pendingTextLines = markers.SplitLinesKeepEOL(textSeg.Bytes)
 				if len(pendingTextLines) > 0 {
@@ -130,7 +116,7 @@ func replayMergedDocument(doc markers.Document, mergedBytes []byte) (markers.Doc
 					}
 				}
 			}
-			nextTextLines := nextTextSegmentLines(doc.Segments, i+1)
+			nextTextLines := nextTextSegmentLinesSession(session.Segments, i+1)
 			nextIdx := -1
 			if len(nextTextLines) > 0 {
 				nextIdx = findSubslice(mergedLines, searchPos, nextTextLines)
@@ -138,7 +124,7 @@ func replayMergedDocument(doc markers.Document, mergedBytes []byte) (markers.Doc
 					nextIdx = findApproxSubslice(mergedLines, searchPos, nextTextLines)
 				}
 				if nextIdx == searchPos && textLinesBlankOnly(nextTextLines) {
-					if fallbackIdx := findNextConflictBoundary(mergedLines, searchPos, doc.Segments, i+1); fallbackIdx > searchPos {
+					if fallbackIdx := findNextConflictBoundarySession(mergedLines, searchPos, session.Segments, i+1); fallbackIdx > searchPos {
 						nextIdx = fallbackIdx
 					}
 				}
@@ -151,15 +137,15 @@ func replayMergedDocument(doc markers.Document, mergedBytes []byte) (markers.Doc
 				conflictPos = searchPos
 			}
 			if nextIdx < conflictPos {
-				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("failed to align conflict segment")
+				return nil, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("failed to align conflict segment")
 			}
 			spanLines := mergedLines[conflictPos:nextIdx]
 			start, end, resolution, manualBytes, labels, labelsKnown := classifyConflictSpan(spanLines, pendingTextLines, s)
 			if start < 0 || end < start || end > len(spanLines) {
-				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("internal: invalid conflict span classification")
+				return nil, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("internal: invalid conflict span classification")
 			}
 			if err := setPendingText(conflictPos + start); err != nil {
-				return doc, manualResolved, alignedLabels, alignedLabelKnown, err
+				return nil, manualResolved, alignedLabels, alignedLabelKnown, err
 			}
 			if labelsKnown {
 				alignedLabels[conflictIndex] = labels
@@ -169,18 +155,18 @@ func replayMergedDocument(doc markers.Document, mergedBytes []byte) (markers.Doc
 				manualResolved[conflictIndex] = manualBytes
 			} else {
 				s.Resolution = resolution
-				doc.Segments[i] = s
+				session.Segments[i] = s
 			}
 			pos = conflictPos + end
 		}
 	}
 	if err := setPendingText(len(mergedLines)); err != nil {
-		return doc, manualResolved, alignedLabels, alignedLabelKnown, err
+		return nil, manualResolved, alignedLabels, alignedLabelKnown, err
 	}
-	return doc, manualResolved, alignedLabels, alignedLabelKnown, nil
+	return session, manualResolved, alignedLabels, alignedLabelKnown, nil
 }
 
-func classifyConflictSpan(spanLines [][]byte, pendingTextLines [][]byte, seg markers.ConflictSegment) (int, int, markers.Resolution, []byte, Labels, bool) {
+func classifyConflictSpan(spanLines [][]byte, pendingTextLines [][]byte, seg ConflictBlock) (int, int, markers.Resolution, []byte, Labels, bool) {
 	if markerStart, markerEnd, ok := locateConflictMarkerSpan(spanLines); ok {
 		labels := labelsFromConflictSpan(spanLines[markerStart:markerEnd])
 		return markerStart, markerEnd, markers.ResolutionUnset, nil, labels, true
@@ -207,7 +193,7 @@ func classifyConflictSpan(spanLines [][]byte, pendingTextLines [][]byte, seg mar
 	return manualStart, len(spanLines), markers.ResolutionUnset, bytes.Join(spanLines[manualStart:], nil), Labels{}, false
 }
 
-func inferEmptyOutputResolution(seg markers.ConflictSegment) markers.Resolution {
+func inferEmptyOutputResolution(seg ConflictBlock) markers.Resolution {
 	oursEmpty := len(markers.SplitLinesKeepEOL(seg.Ours)) == 0
 	theirsEmpty := len(markers.SplitLinesKeepEOL(seg.Theirs)) == 0
 	if oursEmpty && !theirsEmpty {
@@ -262,7 +248,7 @@ func locateConflictMarkerSpan(lines [][]byte) (int, int, bool) {
 	return start, len(lines), true
 }
 
-func findBestResolutionMatch(spanLines [][]byte, seg markers.ConflictSegment) (int, int, markers.Resolution, bool) {
+func findBestResolutionMatch(spanLines [][]byte, seg ConflictBlock) (int, int, markers.Resolution, bool) {
 	if len(spanLines) == 0 {
 		return 0, 0, inferEmptyOutputResolution(seg), true
 	}
@@ -550,9 +536,9 @@ func textLinesBlankOnly(lines [][]byte) bool {
 	return true
 }
 
-func findNextConflictBoundary(mergedLines [][]byte, start int, segments []markers.Segment, segmentStart int) int {
+func findNextConflictBoundarySession(mergedLines [][]byte, start int, segments []Segment, segmentStart int) int {
 	best := findConflictMarkerLineIndex(mergedLines, start)
-	nextConflict, ok := nextConflictSegment(segments, segmentStart)
+	nextConflict, ok := nextConflictBlock(segments, segmentStart)
 	if !ok {
 		return best
 	}
@@ -571,16 +557,16 @@ func findNextConflictBoundary(mergedLines [][]byte, start int, segments []marker
 	return best
 }
 
-func nextConflictSegment(segments []markers.Segment, start int) (markers.ConflictSegment, bool) {
+func nextConflictBlock(segments []Segment, start int) (ConflictBlock, bool) {
 	for i := start; i < len(segments); i++ {
-		if seg, ok := segments[i].(markers.ConflictSegment); ok {
+		if seg, ok := segments[i].(ConflictBlock); ok {
 			return seg, true
 		}
 	}
-	return markers.ConflictSegment{}, false
+	return ConflictBlock{}, false
 }
 
-func conflictMatchCandidates(seg markers.ConflictSegment) [][][]byte {
+func conflictMatchCandidates(seg ConflictBlock) [][][]byte {
 	ours := markers.SplitLinesKeepEOL(seg.Ours)
 	theirs := markers.SplitLinesKeepEOL(seg.Theirs)
 	both := append(append([][]byte{}, ours...), theirs...)
@@ -599,9 +585,9 @@ func findConflictMarkerLineIndex(lines [][]byte, start int) int {
 	return -1
 }
 
-func nextTextSegmentLines(segments []markers.Segment, start int) [][]byte {
+func nextTextSegmentLinesSession(segments []Segment, start int) [][]byte {
 	for i := start; i < len(segments); i++ {
-		if text, ok := segments[i].(markers.TextSegment); ok {
+		if text, ok := segments[i].(TextSegment); ok {
 			lines := markers.SplitLinesKeepEOL(text.Bytes)
 			if len(lines) > 0 {
 				return lines
@@ -650,4 +636,41 @@ func MatchResolution(lines [][]byte, block ConflictBlock) (markers.Resolution, b
 		return markers.ResolutionNone, true
 	}
 	return markers.ResolutionUnset, false
+}
+
+func appendConflictBlock(out *bytes.Buffer, block ConflictBlock, labels Labels) bool {
+	writeMarker := func(prefix string, label string) {
+		out.WriteString(prefix)
+		if label != "" {
+			out.WriteByte(' ')
+			out.WriteString(label)
+		}
+		out.WriteByte('\n')
+	}
+
+	switch block.Resolution {
+	case markers.ResolutionOurs:
+		out.Write(block.Ours)
+		return false
+	case markers.ResolutionTheirs:
+		out.Write(block.Theirs)
+		return false
+	case markers.ResolutionBoth:
+		out.Write(block.Ours)
+		out.Write(block.Theirs)
+		return false
+	case markers.ResolutionNone:
+		return false
+	default:
+		writeMarker("<<<<<<<", labels.OursLabel)
+		out.Write(block.Ours)
+		if len(block.Base) > 0 || labels.BaseLabel != "" {
+			writeMarker("|||||||", labels.BaseLabel)
+			out.Write(block.Base)
+		}
+		writeMarker("=======", "")
+		out.Write(block.Theirs)
+		writeMarker(">>>>>>>", labels.TheirsLabel)
+		return true
+	}
 }

@@ -8,28 +8,32 @@ import (
 	"github.com/chojs23/ec/internal/mergeview"
 )
 
-func parseSingleConflictDoc(t *testing.T) markers.Document {
+func parseSingleConflictSession(t *testing.T) *mergeview.Session {
 	t.Helper()
 	data := []byte("start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nend\n")
-	doc, err := markers.Parse(data)
+	session, err := mergeview.ParseSession(data)
 	if err != nil {
-		t.Fatalf("Parse error: %v", err)
-	}
-	return doc
-}
-
-func sessionFromDoc(t *testing.T, doc markers.Document) *mergeview.Session {
-	t.Helper()
-	session, err := mergeview.SessionFromDocument(doc)
-	if err != nil {
-		t.Fatalf("SessionFromDocument error: %v", err)
+		t.Fatalf("ParseSession error: %v", err)
 	}
 	return session
 }
 
-func replayMergedSession(t *testing.T, doc markers.Document, merged []byte) (*mergeview.Session, map[int][]byte, []mergeview.Labels, []bool) {
+func parseSingleConflictDoc(t *testing.T) *mergeview.Session {
+	return parseSingleConflictSession(t)
+}
+
+func parseSessionFixture(t *testing.T, data []byte) *mergeview.Session {
 	t.Helper()
-	replayed, manual, labels, known, err := mergeview.ReplayMergedResult(sessionFromDoc(t, doc), merged)
+	session, err := mergeview.ParseSession(data)
+	if err != nil {
+		t.Fatalf("ParseSession error: %v", err)
+	}
+	return session
+}
+
+func replayMergedSession(t *testing.T, session *mergeview.Session, merged []byte) (*mergeview.Session, map[int][]byte, []mergeview.Labels, []bool) {
+	t.Helper()
+	replayed, manual, labels, known, err := mergeview.ReplayMergedResult(session, merged)
 	if err != nil {
 		t.Fatalf("ReplayMergedResult error: %v", err)
 	}
@@ -46,21 +50,11 @@ func conflictBlock(t *testing.T, session *mergeview.Session, index int) mergevie
 	return block
 }
 
-func conflictSegment(t *testing.T, doc markers.Document, index int) markers.ConflictSegment {
-	t.Helper()
-	ref := doc.Conflicts[index]
-	seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
-	if !ok {
-		t.Fatalf("expected conflict segment")
-	}
-	return seg
-}
-
-func setConflictResolution(doc *markers.Document, index int, res markers.Resolution) {
-	ref := doc.Conflicts[index]
-	seg := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
-	seg.Resolution = res
-	doc.Segments[ref.SegmentIndex] = seg
+func setConflictResolution(session *mergeview.Session, index int, res markers.Resolution) {
+	ref := session.Conflicts[index]
+	block := session.Segments[ref.SegmentIndex].(mergeview.ConflictBlock)
+	block.Resolution = res
+	session.Segments[ref.SegmentIndex] = block
 }
 
 func TestApplyMergedResolutionsMatchesSelections(t *testing.T) {
@@ -169,7 +163,7 @@ func TestApplyMergedResolutionsPreservesNonConflictEditsWhenResolved(t *testing.
 
 func TestApplyMergedResolutionsHandlesEditedSingleLineSeparator(t *testing.T) {
 	data := []byte("intro\n<<<<<<< HEAD\nours1\n=======\ntheirs1\n>>>>>>> branch\nanchor-one\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\ntail\n")
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -207,7 +201,7 @@ func TestApplyMergedResolutionsHandlesEditedSingleLineSeparator(t *testing.T) {
 
 func TestApplyMergedResolutionsKeepsDuplicatePrefixOutsideConflict(t *testing.T) {
 	data := []byte("keep\n<<<<<<< HEAD\nkeep\n=======\ndrop\n>>>>>>> branch\ntail\n")
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -237,7 +231,7 @@ func TestApplyMergedResolutionsKeepsDuplicatePrefixOutsideConflict(t *testing.T)
 
 func TestApplyMergedResolutionsKeepsFuzzyPrefixOutsideConflict(t *testing.T) {
 	data := []byte("keep root\n<<<<<<< HEAD\nkeep root!\n=======\ndrop\n>>>>>>> branch\ntail\n")
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -267,7 +261,7 @@ func TestApplyMergedResolutionsKeepsFuzzyPrefixOutsideConflict(t *testing.T) {
 
 func TestApplyMergedResolutionsKeepsDuplicateSuffixOutsideConflict(t *testing.T) {
 	data := []byte("gone\nkeep\n<<<<<<< HEAD\nkeep\n=======\ndrop\n>>>>>>> branch\ntail\n")
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -297,7 +291,7 @@ func TestApplyMergedResolutionsKeepsDuplicateSuffixOutsideConflict(t *testing.T)
 
 func TestApplyMergedResolutionsKeepsEditedAndSkippedTextOutsideConflict(t *testing.T) {
 	data := []byte("intro\ngone\nkeep\n<<<<<<< HEAD\nkeep\n=======\ndrop\n>>>>>>> branch\ntail\n")
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -379,7 +373,7 @@ func witrLicenseDiff3Fixture() []byte {
 func TestApplyMergedResolutionsWitrLicenseScenario(t *testing.T) {
 	diff3 := witrLicenseDiff3Fixture()
 
-	doc, err := markers.Parse(diff3)
+	doc, err := mergeview.ParseSession(diff3)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -440,7 +434,7 @@ func TestApplyMergedResolutionsWitrLicenseScenario(t *testing.T) {
 }
 
 func TestApplyMergedResolutionsWitrLicensePartialConflictStaysManual(t *testing.T) {
-	doc, err := markers.Parse(witrLicenseDiff3Fixture())
+	doc, err := mergeview.ParseSession(witrLicenseDiff3Fixture())
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -518,7 +512,7 @@ func TestApplyMergedResolutionsWitrLicensePartialConflictStaysManual(t *testing.
 
 func TestApplyMergedResolutionsKeepsTrueEmptyConflictWithBlankSeparator(t *testing.T) {
 	data := []byte("start\n<<<<<<< HEAD\nours1\n=======\ntheirs1\n>>>>>>> branch\n\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nend\n")
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -549,7 +543,7 @@ func TestApplyMergedResolutionsKeepsTrueEmptyConflictWithBlankSeparator(t *testi
 
 func TestApplyMergedResolutionsPrefersSingleNonEmptySideOverBoth(t *testing.T) {
 	data := []byte("start\n<<<<<<< HEAD\n||||||| base\nsource\n=======\nasdsadf\nsource\n>>>>>>> branch\nend\n")
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -579,7 +573,7 @@ func TestApplyMergedResolutionsPrefersSingleNonEmptySideOverBoth(t *testing.T) {
 
 func TestApplyMergedResolutionsEmptyOursReopensAsOurs(t *testing.T) {
 	data := []byte("start\n<<<<<<< HEAD\n=======\ntheirs\n>>>>>>> branch\nend\n")
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -608,7 +602,7 @@ func TestApplyMergedResolutionsEmptyOursReopensAsOurs(t *testing.T) {
 
 func TestApplyMergedResolutionsEmptyTheirsReopensAsTheirs(t *testing.T) {
 	data := []byte("start\n<<<<<<< HEAD\nours\n=======\n>>>>>>> branch\nend\n")
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -637,7 +631,7 @@ func TestApplyMergedResolutionsEmptyTheirsReopensAsTheirs(t *testing.T) {
 
 func TestApplyMergedResolutionsEmptyBothStaysNone(t *testing.T) {
 	data := []byte("start\n<<<<<<< HEAD\n=======\n>>>>>>> branch\nend\n")
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
@@ -687,18 +681,18 @@ func TestApplyMergedResolutionsAlignsLabelsToOriginalConflictIndex(t *testing.T)
 
 func TestAllResolvedWithManualOverride(t *testing.T) {
 	data := []byte("start\n<<<<<<< HEAD\nours1\n=======\ntheirs1\n>>>>>>> branch\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nend\n")
-	doc, err := markers.Parse(data)
+	doc, err := mergeview.ParseSession(data)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	setConflictResolution(&doc, 0, markers.ResolutionOurs)
-	if mergeview.AllResolved(sessionFromDoc(t, doc), map[int][]byte{}) {
+	setConflictResolution(doc, 0, markers.ResolutionOurs)
+	if mergeview.AllResolved(doc, map[int][]byte{}) {
 		t.Fatalf("expected unresolved without manual override")
 	}
 
 	manual := map[int][]byte{1: []byte("manual\n")}
-	if !mergeview.AllResolved(sessionFromDoc(t, doc), manual) {
+	if !mergeview.AllResolved(doc, manual) {
 		t.Fatalf("expected resolved with manual override")
 	}
 }

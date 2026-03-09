@@ -8,152 +8,88 @@ import (
 	"github.com/chojs23/ec/internal/mergeview"
 )
 
-func TestNewState(t *testing.T) {
-	doc := markers.Document{}
-	state, err := NewState(doc)
+func parseSession(t *testing.T, input []byte) *mergeview.Session {
+	t.Helper()
+	session, err := mergeview.ParseSession(input)
 	if err != nil {
-		t.Fatalf("NewState() error = %v", err)
+		t.Fatalf("ParseSession failed: %v", err)
+	}
+	return session
+}
+
+func conflictBlockAt(t *testing.T, session *mergeview.Session, index int) mergeview.ConflictBlock {
+	t.Helper()
+	ref := session.Conflicts[index]
+	block, ok := session.Segments[ref.SegmentIndex].(mergeview.ConflictBlock)
+	if !ok {
+		t.Fatalf("expected conflict block")
+	}
+	return block
+}
+
+func TestNewStateFromSession(t *testing.T) {
+	state, err := NewStateFromSession(&mergeview.Session{})
+	if err != nil {
+		t.Fatalf("NewStateFromSession error = %v", err)
 	}
 	if state == nil {
-		t.Fatalf("NewState() returned nil state")
+		t.Fatalf("NewStateFromSession returned nil state")
 	}
 }
 
 func TestApplyResolution(t *testing.T) {
-	input := []byte(`line1
-<<<<<<< HEAD
-ours
-||||||| base
-base
-=======
-theirs
->>>>>>> branch
-line2
-<<<<<<< HEAD
-ours2
-=======
-theirs2
->>>>>>> branch
-line3
-`)
-
-	doc, err := markers.Parse(input)
+	state, err := NewStateFromSession(parseSession(t, []byte("line1\n<<<<<<< HEAD\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> branch\nline2\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nline3\n")))
 	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
+		t.Fatalf("NewStateFromSession failed: %v", err)
 	}
 
-	if len(doc.Conflicts) != 2 {
-		t.Fatalf("expected 2 conflicts, got %d", len(doc.Conflicts))
+	if err := state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
+		t.Fatalf("ApplyResolution failed: %v", err)
+	}
+	if got := conflictBlockAt(t, state.Session(), 0).Resolution; got != markers.ResolutionOurs {
+		t.Fatalf("resolution = %q, want %q", got, markers.ResolutionOurs)
 	}
 
-	state, err := NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState failed: %v", err)
+	if err := state.ApplyResolution(1, markers.ResolutionTheirs); err != nil {
+		t.Fatalf("ApplyResolution failed: %v", err)
+	}
+	if got := conflictBlockAt(t, state.Session(), 1).Resolution; got != markers.ResolutionTheirs {
+		t.Fatalf("resolution = %q, want %q", got, markers.ResolutionTheirs)
 	}
 
-	t.Run("apply ours to first conflict", func(t *testing.T) {
-		err := state.ApplyResolution(0, markers.ResolutionOurs)
-		if err != nil {
-			t.Fatalf("ApplyResolution failed: %v", err)
-		}
+	if err := state.ApplyResolution(0, markers.ResolutionNone); err != nil {
+		t.Fatalf("ApplyResolution failed: %v", err)
+	}
+	if got := conflictBlockAt(t, state.Session(), 0).Resolution; got != markers.ResolutionNone {
+		t.Fatalf("resolution = %q, want %q", got, markers.ResolutionNone)
+	}
 
-		currentDoc := state.Document()
-		seg := currentDoc.Segments[currentDoc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
-		if seg.Resolution != markers.ResolutionOurs {
-			t.Errorf("expected resolution ours, got %q", seg.Resolution)
-		}
-	})
-
-	t.Run("apply theirs to second conflict", func(t *testing.T) {
-		err := state.ApplyResolution(1, markers.ResolutionTheirs)
-		if err != nil {
-			t.Fatalf("ApplyResolution failed: %v", err)
-		}
-
-		currentDoc := state.Document()
-		seg := currentDoc.Segments[currentDoc.Conflicts[1].SegmentIndex].(markers.ConflictSegment)
-		if seg.Resolution != markers.ResolutionTheirs {
-			t.Errorf("expected resolution theirs, got %q", seg.Resolution)
-		}
-	})
-
-	t.Run("apply none to first conflict", func(t *testing.T) {
-		err := state.ApplyResolution(0, markers.ResolutionNone)
-		if err != nil {
-			t.Fatalf("ApplyResolution failed: %v", err)
-		}
-
-		currentDoc := state.Document()
-		seg := currentDoc.Segments[currentDoc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
-		if seg.Resolution != markers.ResolutionNone {
-			t.Errorf("expected resolution none, got %q", seg.Resolution)
-		}
-	})
-
-	t.Run("invalid conflict index", func(t *testing.T) {
-		err := state.ApplyResolution(2, markers.ResolutionOurs)
-		if err == nil {
-			t.Error("expected error for out of bounds index")
-		}
-	})
-
-	t.Run("negative conflict index", func(t *testing.T) {
-		err := state.ApplyResolution(-1, markers.ResolutionOurs)
-		if err == nil {
-			t.Error("expected error for negative index")
-		}
-	})
-
-	t.Run("invalid resolution", func(t *testing.T) {
-		err := state.ApplyResolution(0, markers.Resolution("invalid"))
-		if err == nil {
-			t.Error("expected error for invalid resolution")
-		}
-	})
-
-	t.Run("unset resolution rejected", func(t *testing.T) {
-		err := state.ApplyResolution(0, markers.ResolutionUnset)
-		if err == nil {
-			t.Error("expected error for unset resolution")
-		}
-	})
+	if err := state.ApplyResolution(2, markers.ResolutionOurs); err == nil {
+		t.Fatalf("expected out of bounds error")
+	}
+	if err := state.ApplyResolution(-1, markers.ResolutionOurs); err == nil {
+		t.Fatalf("expected negative index error")
+	}
+	if err := state.ApplyResolution(0, markers.Resolution("invalid")); err == nil {
+		t.Fatalf("expected invalid resolution error")
+	}
+	if err := state.ApplyResolution(0, markers.ResolutionUnset); err == nil {
+		t.Fatalf("expected unset resolution error")
+	}
 }
 
 func TestApplyAll(t *testing.T) {
-	input := []byte(`line1
-<<<<<<< HEAD
-ours
-=======
-theirs
->>>>>>> branch
-line2
-<<<<<<< HEAD
-ours2
-=======
-theirs2
->>>>>>> branch
-line3
-`)
-
-	doc, err := markers.Parse(input)
+	state, err := NewStateFromSession(parseSession(t, []byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nline3\n")))
 	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
+		t.Fatalf("NewStateFromSession failed: %v", err)
 	}
-
-	state, err := NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState failed: %v", err)
-	}
-
 	if err := state.ApplyAll(markers.ResolutionTheirs); err != nil {
 		t.Fatalf("ApplyAll failed: %v", err)
 	}
-
-	currentDoc := state.Document()
-	for i, ref := range currentDoc.Conflicts {
-		seg := currentDoc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
-		if seg.Resolution != markers.ResolutionTheirs {
-			t.Errorf("conflict %d expected theirs, got %q", i, seg.Resolution)
+	session := state.Session()
+	for i := range session.Conflicts {
+		if got := conflictBlockAt(t, session, i).Resolution; got != markers.ResolutionTheirs {
+			t.Fatalf("conflict %d resolution = %q, want %q", i, got, markers.ResolutionTheirs)
 		}
 	}
 }
@@ -166,274 +102,67 @@ func TestPreview(t *testing.T) {
 		want        []byte
 		wantErr     bool
 	}{
-		{
-			name: "single conflict ours",
-			input: []byte(`line1
-<<<<<<< HEAD
-ours
-=======
-theirs
->>>>>>> branch
-line2
-`),
-			resolutions: []markers.Resolution{markers.ResolutionOurs},
-			want: []byte(`line1
-ours
-line2
-`),
-			wantErr: false,
-		},
-		{
-			name: "single conflict theirs",
-			input: []byte(`line1
-<<<<<<< HEAD
-ours
-=======
-theirs
->>>>>>> branch
-line2
-`),
-			resolutions: []markers.Resolution{markers.ResolutionTheirs},
-			want: []byte(`line1
-theirs
-line2
-`),
-			wantErr: false,
-		},
-		{
-			name: "single conflict both",
-			input: []byte(`line1
-<<<<<<< HEAD
-ours
-=======
-theirs
->>>>>>> branch
-line2
-`),
-			resolutions: []markers.Resolution{markers.ResolutionBoth},
-			want: []byte(`line1
-ours
-theirs
-line2
-`),
-			wantErr: false,
-		},
-		{
-			name: "single conflict none",
-			input: []byte(`line1
-<<<<<<< HEAD
-ours
-=======
-theirs
->>>>>>> branch
-line2
-`),
-			resolutions: []markers.Resolution{markers.ResolutionNone},
-			want: []byte(`line1
-line2
-`),
-			wantErr: false,
-		},
-		{
-			name: "multiple conflicts mixed",
-			input: []byte(`line1
-<<<<<<< HEAD
-ours1
-=======
-theirs1
->>>>>>> branch
-line2
-<<<<<<< HEAD
-ours2
-=======
-theirs2
->>>>>>> branch
-line3
-`),
-			resolutions: []markers.Resolution{markers.ResolutionOurs, markers.ResolutionTheirs},
-			want: []byte(`line1
-ours1
-line2
-theirs2
-line3
-`),
-			wantErr: false,
-		},
-		{
-			name: "unresolved conflict",
-			input: []byte(`line1
-<<<<<<< HEAD
-ours
-=======
-theirs
->>>>>>> branch
-line2
-`),
-			resolutions: []markers.Resolution{},
-			want:        nil,
-			wantErr:     true,
-		},
+		{name: "ours", input: []byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n"), resolutions: []markers.Resolution{markers.ResolutionOurs}, want: []byte("line1\nours\nline2\n")},
+		{name: "theirs", input: []byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n"), resolutions: []markers.Resolution{markers.ResolutionTheirs}, want: []byte("line1\ntheirs\nline2\n")},
+		{name: "both", input: []byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n"), resolutions: []markers.Resolution{markers.ResolutionBoth}, want: []byte("line1\nours\ntheirs\nline2\n")},
+		{name: "none", input: []byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n"), resolutions: []markers.Resolution{markers.ResolutionNone}, want: []byte("line1\nline2\n")},
+		{name: "mixed", input: []byte("line1\n<<<<<<< HEAD\nours1\n=======\ntheirs1\n>>>>>>> branch\nline2\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nline3\n"), resolutions: []markers.Resolution{markers.ResolutionOurs, markers.ResolutionTheirs}, want: []byte("line1\nours1\nline2\ntheirs2\nline3\n")},
+		{name: "unresolved", input: []byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n"), wantErr: true},
 	}
-
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			doc, err := markers.Parse(tt.input)
+			state, err := NewStateFromSession(parseSession(t, tt.input))
 			if err != nil {
-				t.Fatalf("Parse failed: %v", err)
+				t.Fatalf("NewStateFromSession failed: %v", err)
 			}
-
-			state, err := NewState(doc)
-			if err != nil {
-				t.Fatalf("NewState failed: %v", err)
-			}
-
 			for i, res := range tt.resolutions {
 				if err := state.ApplyResolution(i, res); err != nil {
-					t.Fatalf("ApplyResolution(%d, %q) failed: %v", i, res, err)
+					t.Fatalf("ApplyResolution(%d) failed: %v", i, err)
 				}
 			}
-
 			got, err := state.Preview()
 			if (err != nil) != tt.wantErr {
-				t.Errorf("Preview() error = %v, wantErr %v", err, tt.wantErr)
-				return
+				t.Fatalf("Preview error = %v, wantErr %v", err, tt.wantErr)
 			}
-
 			if !tt.wantErr && !bytes.Equal(got, tt.want) {
-				t.Errorf("Preview() mismatch:\ngot:\n%s\nwant:\n%s", got, tt.want)
+				t.Fatalf("Preview mismatch: got %q want %q", string(got), string(tt.want))
 			}
 		})
 	}
 }
 
 func TestPreviewDeterministic(t *testing.T) {
-	input := []byte(`line1
-<<<<<<< HEAD
-ours
-||||||| base
-base
-=======
-theirs
->>>>>>> branch
-line2
-`)
-
-	doc, err := markers.Parse(input)
+	state, err := NewStateFromSession(parseSession(t, []byte("line1\n<<<<<<< HEAD\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> branch\nline2\n")))
 	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
+		t.Fatalf("NewStateFromSession failed: %v", err)
 	}
-
-	state, err := NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState failed: %v", err)
-	}
-
 	if err := state.ApplyResolution(0, markers.ResolutionBoth); err != nil {
 		t.Fatalf("ApplyResolution failed: %v", err)
 	}
-
 	preview1, err := state.Preview()
 	if err != nil {
 		t.Fatalf("Preview 1 failed: %v", err)
 	}
-
 	preview2, err := state.Preview()
 	if err != nil {
 		t.Fatalf("Preview 2 failed: %v", err)
 	}
-
 	if !bytes.Equal(preview1, preview2) {
-		t.Errorf("Preview not deterministic:\nfirst:\n%s\nsecond:\n%s", preview1, preview2)
+		t.Fatalf("preview not deterministic")
 	}
 }
 
-func TestDocument(t *testing.T) {
-	input := []byte(`line1
-<<<<<<< HEAD
-ours
-=======
-theirs
->>>>>>> branch
-line2
-`)
-
-	doc, err := markers.Parse(input)
-	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
-	}
-
-	state, err := NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState failed: %v", err)
-	}
-
-	if err := state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
-		t.Fatalf("ApplyResolution failed: %v", err)
-	}
-
-	retrievedDoc := state.Document()
-	stateDoc := state.Document()
-
-	if len(retrievedDoc.Conflicts) != len(stateDoc.Conflicts) {
-		t.Errorf("Document() conflicts mismatch: got %d, want %d", len(retrievedDoc.Conflicts), len(stateDoc.Conflicts))
-	}
-
-	if len(retrievedDoc.Segments) != len(stateDoc.Segments) {
-		t.Errorf("Document() segments mismatch: got %d, want %d", len(retrievedDoc.Segments), len(stateDoc.Segments))
-	}
-}
-
-func TestReplaceDocument(t *testing.T) {
-	input := []byte(`line1
-<<<<<<< HEAD
-ours
-=======
-theirs
->>>>>>> branch
-line2
-`)
-
-	doc, err := markers.Parse(input)
-	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
-	}
-
-	state, err := NewState(doc)
-	if err != nil {
-		t.Fatalf("NewState failed: %v", err)
-	}
-
-	edited := markers.CloneDocument(doc)
-	editedSeg := edited.Segments[edited.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
-	editedSeg.Resolution = markers.ResolutionOurs
-	edited.Segments[edited.Conflicts[0].SegmentIndex] = editedSeg
-
-	state.ReplaceDocument(edited)
-	currentDoc := state.Document()
-	seg := currentDoc.Segments[currentDoc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
-	if seg.Resolution != markers.ResolutionOurs {
-		t.Fatalf("Resolution = %q, want %q after replace", seg.Resolution, markers.ResolutionOurs)
-	}
-}
-
-func TestNewStateFromSession(t *testing.T) {
-	doc, err := markers.Parse([]byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n"))
-	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
-	}
-	session, err := mergeview.SessionFromDocument(doc)
-	if err != nil {
-		t.Fatalf("SessionFromDocument failed: %v", err)
-	}
-	state, err := NewStateFromSession(session)
+func TestReplaceSession(t *testing.T) {
+	state, err := NewStateFromSession(parseSession(t, []byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n")))
 	if err != nil {
 		t.Fatalf("NewStateFromSession failed: %v", err)
 	}
-	if err := state.ApplyResolution(0, markers.ResolutionTheirs); err != nil {
+	replacement := parseSession(t, []byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n"))
+	if err := replacement.ApplyResolution(0, markers.ResolutionOurs); err != nil {
 		t.Fatalf("ApplyResolution failed: %v", err)
 	}
-	seg := state.Session().Document().Segments[1].(markers.ConflictSegment)
-	if seg.Resolution != markers.ResolutionTheirs {
-		t.Fatalf("Resolution = %q, want %q", seg.Resolution, markers.ResolutionTheirs)
+	state.ReplaceSession(replacement)
+	if got := conflictBlockAt(t, state.Session(), 0).Resolution; got != markers.ResolutionOurs {
+		t.Fatalf("resolution = %q, want %q", got, markers.ResolutionOurs)
 	}
 }

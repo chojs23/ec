@@ -150,48 +150,36 @@ type resultRange struct {
 	resolved bool
 }
 
-func buildPaneLinesFromDoc(doc markers.Document, side paneSide, highlightConflict int, selectedSide selectionSide) ([]lineInfo, int) {
+func buildPaneLinesFromSession(session *mergeview.Session, side paneSide, highlightConflict int, selectedSide selectionSide) ([]lineInfo, int) {
 	var lines []lineInfo
 	conflictIndex := -1
 	currentStart := -1
 
-	for _, seg := range doc.Segments {
+	for _, seg := range session.Segments {
 		switch s := seg.(type) {
-		case markers.TextSegment:
+		case mergeview.TextSegment:
 			segmentLines := splitLines(s.Bytes)
 			lines = append(lines, makeLineInfos(segmentLines, categoryDefault, false, false, false, false, "")...)
-		case markers.ConflictSegment:
+		case mergeview.ConflictBlock:
 			conflictIndex++
 			if conflictIndex == highlightConflict {
 				currentStart = len(lines)
 			}
 			selected := conflictIndex == highlightConflict
-			oursEntries, theirsEntries := conflictEntries(s)
-			var entries []lineEntry
-			switch side {
-			case paneOurs:
-				entries = oursEntries
-			case paneTheirs:
+			oursEntries, theirsEntries := conflictEntriesBlock(s)
+			entries := oursEntries
+			if side == paneTheirs {
 				entries = theirsEntries
 			}
 
 			if selected && selectedSideMatchesPane(selectedSide, side) {
-				lines = append(lines, lineInfo{
-					text:      fmt.Sprintf(">> selected hunk start (%s) >>", sideLabel(side)),
-					category:  categoryInsertMarker,
-					highlight: true,
-					selected:  true,
-					underline: false,
-					dim:       false,
-					connector: connectorForSide(side),
-				})
+				lines = append(lines, lineInfo{text: fmt.Sprintf(">> selected hunk start (%s) >>", sideLabel(side)), category: categoryInsertMarker, highlight: true, selected: true, connector: connectorForSide(side)})
 			}
 
 			resolution := s.Resolution
 			if resolution == markers.ResolutionUnset && selected {
 				resolution = resolutionFromSelection(selectedSide)
 			}
-
 			connector := ""
 			if selected && resolutionIncludes(resolution, side) {
 				connector = connectorForSide(side)
@@ -204,27 +192,11 @@ func buildPaneLinesFromDoc(doc markers.Document, side paneSide, highlightConflic
 				if entry.category == categoryRemoved {
 					text = "- " + text
 				}
-				lines = append(lines, lineInfo{
-					text:      text,
-					category:  entry.category,
-					highlight: highlight,
-					selected:  selected,
-					underline: false,
-					dim:       dim,
-					connector: connector,
-				})
+				lines = append(lines, lineInfo{text: text, category: entry.category, highlight: highlight, selected: selected, dim: dim, connector: connector})
 			}
 
 			if selected && selectedSideMatchesPane(selectedSide, side) {
-				lines = append(lines, lineInfo{
-					text:      ">> selected hunk end >>",
-					category:  categoryInsertMarker,
-					highlight: true,
-					selected:  true,
-					underline: false,
-					dim:       false,
-					connector: connectorForSide(side),
-				})
+				lines = append(lines, lineInfo{text: ">> selected hunk end >>", category: categoryInsertMarker, highlight: true, selected: true, connector: connectorForSide(side)})
 			}
 		}
 	}
@@ -235,11 +207,7 @@ func buildPaneLinesFromDoc(doc markers.Document, side paneSide, highlightConflic
 	return lines, currentStart
 }
 
-func buildPaneLinesFromSession(session *mergeview.Session, side paneSide, highlightConflict int, selectedSide selectionSide) ([]lineInfo, int) {
-	return buildPaneLinesFromDoc(session.Document(), side, highlightConflict, selectedSide)
-}
-
-func buildPaneLinesFromEntries(doc markers.Document, side paneSide, highlightConflict int, selectedSide selectionSide, entries []lineEntry, ranges []conflictRange) ([]lineInfo, int) {
+func buildPaneLinesFromEntriesSession(session *mergeview.Session, side paneSide, highlightConflict int, selectedSide selectionSide, entries []lineEntry, ranges []conflictRange) ([]lineInfo, int) {
 	var lines []lineInfo
 	currentStart := 0
 	selectedFound := false
@@ -250,12 +218,11 @@ func buildPaneLinesFromEntries(doc markers.Document, side paneSide, highlightCon
 	if highlightConflict >= 0 && highlightConflict < len(ranges) {
 		selectedRange = ranges[highlightConflict]
 	}
-
 	baseStart := selectedRange.baseStart
 	baseEnd := selectedRange.baseEnd
 	sideStart, sideEnd := selectedRange.sideRange(side)
 
-	resolution := conflictResolutionForIndex(doc, highlightConflict, selectedSide)
+	resolution := conflictResolutionForIndexSession(session, highlightConflict, selectedSide)
 	connector := ""
 	if highlightConflict >= 0 && resolutionIncludes(resolution, side) {
 		connector = connectorForSide(side)
@@ -265,44 +232,24 @@ func buildPaneLinesFromEntries(doc markers.Document, side paneSide, highlightCon
 		if !selectedSideMatchesPane(selectedSide, side) {
 			return
 		}
-		lines = append(lines, lineInfo{
-			text:      fmt.Sprintf(">> selected hunk start (%s) >>", sideLabel(side)),
-			category:  categoryInsertMarker,
-			highlight: true,
-			selected:  true,
-			underline: false,
-			dim:       false,
-			connector: connectorForSide(side),
-		})
+		lines = append(lines, lineInfo{text: fmt.Sprintf(">> selected hunk start (%s) >>", sideLabel(side)), category: categoryInsertMarker, highlight: true, selected: true, connector: connectorForSide(side)})
 	}
-
 	addEndMarker := func() {
 		if !selectedSideMatchesPane(selectedSide, side) {
 			return
 		}
-		lines = append(lines, lineInfo{
-			text:      ">> selected hunk end >>",
-			category:  categoryInsertMarker,
-			highlight: true,
-			selected:  true,
-			underline: false,
-			dim:       false,
-			connector: connectorForSide(side),
-		})
+		lines = append(lines, lineInfo{text: ">> selected hunk end >>", category: categoryInsertMarker, highlight: true, selected: true, connector: connectorForSide(side)})
 	}
 
 	for _, entry := range entries {
 		selected := false
 		if highlightConflict >= 0 {
 			if entry.category == categoryRemoved {
-				if entry.baseIndex >= 0 && baseStart >= 0 && entry.baseIndex >= baseStart && entry.baseIndex < baseEnd {
-					selected = true
-				}
-			} else if sideStart >= 0 && sideLineIndex >= sideStart && sideLineIndex < sideEnd {
-				selected = true
+				selected = entry.baseIndex >= 0 && baseStart >= 0 && entry.baseIndex >= baseStart && entry.baseIndex < baseEnd
+			} else {
+				selected = sideStart >= 0 && sideLineIndex >= sideStart && sideLineIndex < sideEnd
 			}
 		}
-
 		if selected && !selectedFound {
 			selectedFound = true
 			currentStart = len(lines)
@@ -311,7 +258,6 @@ func buildPaneLinesFromEntries(doc markers.Document, side paneSide, highlightCon
 		if !selected && lastSelected {
 			addEndMarker()
 		}
-
 		text := entry.text
 		highlight := entry.category != categoryDefault
 		dim := entry.category == categoryRemoved
@@ -322,92 +268,57 @@ func buildPaneLinesFromEntries(doc markers.Document, side paneSide, highlightCon
 		if selected {
 			lineConnector = connector
 		}
-		lines = append(lines, lineInfo{
-			text:      text,
-			category:  entry.category,
-			highlight: highlight,
-			selected:  selected,
-			underline: false,
-			dim:       dim,
-			connector: lineConnector,
-		})
-
+		lines = append(lines, lineInfo{text: text, category: entry.category, highlight: highlight, selected: selected, dim: dim, connector: lineConnector})
 		if entry.category != categoryRemoved {
 			sideLineIndex++
 		}
 		lastSelected = selected
 	}
-
 	if lastSelected {
 		addEndMarker()
 	}
-
 	return lines, currentStart
 }
 
-func buildPaneLinesFromEntriesSession(session *mergeview.Session, side paneSide, highlightConflict int, selectedSide selectionSide, entries []lineEntry, ranges []conflictRange) ([]lineInfo, int) {
-	return buildPaneLinesFromEntries(session.Document(), side, highlightConflict, selectedSide, entries, ranges)
-}
-
-func conflictResolutionForIndex(doc markers.Document, conflictIndex int, selectedSide selectionSide) markers.Resolution {
-	if conflictIndex < 0 || conflictIndex >= len(doc.Conflicts) {
+func conflictResolutionForIndexSession(session *mergeview.Session, conflictIndex int, selectedSide selectionSide) markers.Resolution {
+	if conflictIndex < 0 || conflictIndex >= len(session.Conflicts) {
 		return markers.ResolutionUnset
 	}
-
-	ref := doc.Conflicts[conflictIndex]
-	seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+	ref := session.Conflicts[conflictIndex]
+	block, ok := session.Segments[ref.SegmentIndex].(mergeview.ConflictBlock)
 	if !ok {
 		return markers.ResolutionUnset
 	}
-
-	resolution := seg.Resolution
+	resolution := block.Resolution
 	if resolution == markers.ResolutionUnset {
 		resolution = resolutionFromSelection(selectedSide)
 	}
 	return resolution
 }
 
-func computeConflictRanges(doc markers.Document, baseLines []string, oursLines []string, theirsLines []string) ([]conflictRange, bool) {
-	if len(doc.Conflicts) == 0 {
+func computeConflictRangesSession(session *mergeview.Session, baseLines []string, oursLines []string, theirsLines []string) ([]conflictRange, bool) {
+	if len(session.Conflicts) == 0 {
 		return nil, true
 	}
-
-	ranges := make([]conflictRange, 0, len(doc.Conflicts))
-	basePos := 0
-	oursPos := 0
-	theirsPos := 0
-
-	for _, ref := range doc.Conflicts {
-		seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+	ranges := make([]conflictRange, 0, len(session.Conflicts))
+	basePos, oursPos, theirsPos := 0, 0, 0
+	for _, ref := range session.Conflicts {
+		block, ok := session.Segments[ref.SegmentIndex].(mergeview.ConflictBlock)
 		if !ok {
 			return nil, false
 		}
-
-		baseSeq := splitLines(seg.Base)
-		oursSeq := splitLines(seg.Ours)
-		theirsSeq := splitLines(seg.Theirs)
-
+		baseSeq := splitLines(block.Base)
+		oursSeq := splitLines(block.Ours)
+		theirsSeq := splitLines(block.Theirs)
 		baseStart, baseEnd, okBase := findSequence(baseLines, baseSeq, basePos)
 		oursStart, oursEnd, okOurs := findSequence(oursLines, oursSeq, oursPos)
 		theirsStart, theirsEnd, okTheirs := findSequence(theirsLines, theirsSeq, theirsPos)
 		if !okBase || !okOurs || !okTheirs {
 			return nil, false
 		}
-
-		ranges = append(ranges, conflictRange{
-			baseStart:   baseStart,
-			baseEnd:     baseEnd,
-			oursStart:   oursStart,
-			oursEnd:     oursEnd,
-			theirsStart: theirsStart,
-			theirsEnd:   theirsEnd,
-		})
-
-		basePos = baseEnd
-		oursPos = oursEnd
-		theirsPos = theirsEnd
+		ranges = append(ranges, conflictRange{baseStart: baseStart, baseEnd: baseEnd, oursStart: oursStart, oursEnd: oursEnd, theirsStart: theirsStart, theirsEnd: theirsEnd})
+		basePos, oursPos, theirsPos = baseEnd, oursEnd, theirsEnd
 	}
-
 	return ranges, true
 }
 
@@ -442,17 +353,16 @@ func findSequence(lines []string, seq []string, start int) (int, int, bool) {
 	return -1, -1, false
 }
 
-func buildResultLines(doc markers.Document, highlightConflict int, selectedSide selectionSide, manualResolved map[int][]byte) ([]lineInfo, int) {
+func buildResultLinesSession(session *mergeview.Session, highlightConflict int, selectedSide selectionSide, manualResolved map[int][]byte) ([]lineInfo, int) {
 	var lines []lineInfo
 	conflictIndex := -1
 	currentStart := -1
-
-	for _, seg := range doc.Segments {
+	for _, seg := range session.Segments {
 		switch s := seg.(type) {
-		case markers.TextSegment:
+		case mergeview.TextSegment:
 			segmentLines := splitLines(s.Bytes)
 			lines = append(lines, makeLineInfos(segmentLines, categoryDefault, false, false, false, false, "")...)
-		case markers.ConflictSegment:
+		case mergeview.ConflictBlock:
 			conflictIndex++
 			selected := conflictIndex == highlightConflict
 			underline := selected
@@ -462,15 +372,7 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 					currentStart = len(lines)
 				}
 				for _, line := range manualLines {
-					lines = append(lines, lineInfo{
-						text:      line,
-						category:  categoryResolved,
-						highlight: false,
-						selected:  selected,
-						underline: underline,
-						dim:       false,
-						connector: connectorForResult(true, selected),
-					})
+					lines = append(lines, lineInfo{text: line, category: categoryResolved, selected: selected, underline: underline, connector: connectorForResult(true, selected)})
 				}
 				continue
 			}
@@ -479,8 +381,7 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 			if preview {
 				effectiveResolution = resolutionFromSelection(selectedSide)
 			}
-
-			oursEntries, theirsEntries := conflictEntries(s)
+			oursEntries, theirsEntries := conflictEntriesBlock(s)
 			var entries []lineEntry
 			switch effectiveResolution {
 			case markers.ResolutionOurs:
@@ -492,103 +393,64 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 				entries = append(entries, theirsEntries...)
 			case markers.ResolutionNone:
 				entries = nil
-			default:
-				entries = nil
 			}
-
 			if selected {
 				currentStart = len(lines)
 			}
-
 			if len(entries) == 0 {
 				if preview {
-					lines = append(lines, lineInfo{
-						text:      "[unresolved conflict]",
-						category:  categoryConflicted,
-						dim:       true,
-						connector: connectorForResult(false, selected),
-					})
+					lines = append(lines, lineInfo{text: "[unresolved conflict]", category: categoryConflicted, dim: true, connector: connectorForResult(false, selected)})
 				} else if effectiveResolution == markers.ResolutionNone && selected {
-					lines = append(lines, lineInfo{
-						text:      "[resolved: none]",
-						category:  categoryResolved,
-						highlight: true,
-						selected:  selected,
-						underline: underline,
-						dim:       false,
-						connector: connectorForResult(true, selected),
-					})
+					lines = append(lines, lineInfo{text: "[resolved: none]", category: categoryResolved, highlight: true, selected: selected, underline: underline, connector: connectorForResult(true, selected)})
 				}
 				continue
 			}
-
 			resolved := !preview
 			for _, entry := range entries {
 				if entry.category == categoryRemoved {
 					continue
 				}
-				highlight := entry.category != categoryDefault
 				category := entry.category
 				if resolved {
 					category = categoryResolved
 				}
-				lines = append(lines, lineInfo{
-					text:      entry.text,
-					category:  category,
-					highlight: highlight,
-					selected:  selected,
-					underline: underline,
-					dim:       preview,
-					connector: connectorForResult(resolved, selected),
-				})
+				lines = append(lines, lineInfo{text: entry.text, category: category, highlight: entry.category != categoryDefault, selected: selected, underline: underline, dim: preview, connector: connectorForResult(resolved, selected)})
 			}
-
 		}
 	}
-
 	if currentStart == -1 {
 		currentStart = 0
 	}
 	return lines, currentStart
 }
 
-func buildResultLinesSession(session *mergeview.Session, highlightConflict int, selectedSide selectionSide, manualResolved map[int][]byte) ([]lineInfo, int) {
-	return buildResultLines(session.Document(), highlightConflict, selectedSide, manualResolved)
-}
-
-func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, manualResolved map[int][]byte, highlightConflict int) ([]string, map[int]lineCategory, []resultRange) {
+func buildResultPreviewLinesSession(session *mergeview.Session, selectedSide selectionSide, manualResolved map[int][]byte, highlightConflict int) ([]string, map[int]lineCategory, []resultRange) {
 	var lines []string
 	forced := map[int]lineCategory{}
-	ranges := make([]resultRange, 0, len(doc.Conflicts))
+	ranges := make([]resultRange, 0, len(session.Conflicts))
 	conflictIndex := -1
-
 	appendLines := func(newLines []string) {
-		if len(newLines) == 0 {
-			return
+		if len(newLines) > 0 {
+			lines = append(lines, newLines...)
 		}
-		lines = append(lines, newLines...)
 	}
-
-	for _, seg := range doc.Segments {
+	for _, seg := range session.Segments {
 		switch s := seg.(type) {
-		case markers.TextSegment:
+		case mergeview.TextSegment:
 			appendLines(splitLines(s.Bytes))
-		case markers.ConflictSegment:
+		case mergeview.ConflictBlock:
 			conflictIndex++
 			start := len(lines)
-
 			if manualBytes, ok := manualResolved[conflictIndex]; ok {
 				appendLines(splitLines(manualBytes))
 				ranges = append(ranges, resultRange{start: start, end: len(lines), resolved: true})
 				continue
 			}
-
 			resolved := s.Resolution != markers.ResolutionUnset
 			resolution := s.Resolution
 			if !resolved {
 				resolution = resolutionFromSelection(selectedSide)
 			}
-
 			switch resolution {
 			case markers.ResolutionOurs:
 				appendLines(splitLines(s.Ours))
@@ -599,25 +461,30 @@ func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, m
 				appendLines(splitLines(s.Theirs))
 			case markers.ResolutionNone:
 				if !resolved {
-					placeholder := "[unresolved conflict]"
 					forced[len(lines)] = categoryConflicted
-					appendLines([]string{placeholder})
+					appendLines([]string{"[unresolved conflict]"})
 				} else if conflictIndex == highlightConflict {
-					placeholder := "[resolved: none]"
 					forced[len(lines)] = categoryResolved
-					appendLines([]string{placeholder})
+					appendLines([]string{"[resolved: none]"})
 				}
 			}
-
 			ranges = append(ranges, resultRange{start: start, end: len(lines), resolved: resolved})
 		}
 	}
-
 	return lines, forced, ranges
 }
 
-func buildResultPreviewLinesSession(session *mergeview.Session, selectedSide selectionSide, manualResolved map[int][]byte, highlightConflict int) ([]string, map[int]lineCategory, []resultRange) {
-	return buildResultPreviewLines(session.Document(), selectedSide, manualResolved, highlightConflict)
+func conflictEntriesBlock(block mergeview.ConflictBlock) ([]lineEntry, []lineEntry) {
+	baseLines := splitLines(block.Base)
+	oursLines := splitLines(block.Ours)
+	theirsLines := splitLines(block.Theirs)
+	if len(baseLines) == 0 {
+		return entriesFromLines(oursLines, categoryConflicted), entriesFromLines(theirsLines, categoryConflicted)
+	}
+	oursEntries := diffEntries(baseLines, oursLines)
+	theirsEntries := diffEntries(baseLines, theirsLines)
+	markConflicted(&oursEntries, &theirsEntries)
+	return oursEntries, theirsEntries
 }
 
 func buildResultLinesFromEntries(entries []lineEntry, resultRanges []resultRange, highlightConflict int, forcedCategories map[int]lineCategory) ([]lineInfo, int) {
@@ -730,21 +597,6 @@ type diffOp struct {
 	kind      diffOpKind
 	text      string
 	baseIndex int
-}
-
-func conflictEntries(seg markers.ConflictSegment) ([]lineEntry, []lineEntry) {
-	baseLines := splitLines(seg.Base)
-	oursLines := splitLines(seg.Ours)
-	theirsLines := splitLines(seg.Theirs)
-
-	if len(baseLines) == 0 {
-		return entriesFromLines(oursLines, categoryConflicted), entriesFromLines(theirsLines, categoryConflicted)
-	}
-
-	oursEntries := diffEntries(baseLines, oursLines)
-	theirsEntries := diffEntries(baseLines, theirsLines)
-	markConflicted(&oursEntries, &theirsEntries)
-	return oursEntries, theirsEntries
 }
 
 func entriesFromLines(lines []string, category lineCategory) []lineEntry {

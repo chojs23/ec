@@ -165,7 +165,6 @@ type model struct {
 	opts             cli.Options
 	state            *engine.State
 	session          *mergeview.Session
-	doc              markers.Document
 	baseLines        []string
 	oursLines        []string
 	theirsLines      []string
@@ -217,11 +216,9 @@ func Run(ctx context.Context, opts cli.Options) error {
 		return err
 	}
 
-	doc := resolverState.doc
-
 	// Validate base completeness unless explicitly allowed to proceed without it.
 	if !opts.AllowMissingBase {
-		if err := engine.ValidateBaseCompleteness(doc); err != nil {
+		if err := engine.ValidateBaseCompletenessSession(resolverState.session); err != nil {
 			if shouldAllowMissingBaseFallback(ctx, opts, err) {
 				opts.AllowMissingBase = true
 			} else {
@@ -236,14 +233,13 @@ func Run(ctx context.Context, opts cli.Options) error {
 		return fmt.Errorf("failed to create state: %w", err)
 	}
 
-	baseLines, oursLines, theirsLines, ranges, useFullDiff := prepareFullDiff(doc, opts)
+	baseLines, oursLines, theirsLines, ranges, useFullDiff := prepareFullDiff(resolverState.session, opts)
 
 	m := model{
 		ctx:              ctx,
 		opts:             opts,
 		state:            state,
 		session:          resolverState.session,
-		doc:              doc,
 		baseLines:        baseLines,
 		oursLines:        oursLines,
 		theirsLines:      theirsLines,
@@ -358,10 +354,8 @@ func (m *model) reloadFromFile() error {
 		return err
 	}
 
-	doc := resolverState.doc
-
 	if !m.opts.AllowMissingBase {
-		if err := engine.ValidateBaseCompleteness(doc); err != nil {
+		if err := engine.ValidateBaseCompletenessSession(resolverState.session); err != nil {
 			if shouldAllowMissingBaseFallback(m.ctx, m.opts, err) {
 				m.opts.AllowMissingBase = true
 			} else {
@@ -373,7 +367,6 @@ func (m *model) reloadFromFile() error {
 	return m.applyResolverMutation(func() error {
 		m.state.ReplaceSession(resolverState.session)
 		m.session = m.state.Session()
-		m.doc = m.state.Document()
 		m.manualResolved = resolverState.manualResolved
 		m.mergedLabels = resolverState.mergedLabels
 		m.mergedLabelKnown = resolverState.mergedLabelKnown
@@ -388,7 +381,7 @@ func (m *model) reloadFromFile() error {
 	})
 }
 
-func prepareFullDiff(doc markers.Document, opts cli.Options) ([]string, []string, []string, []conflictRange, bool) {
+func prepareFullDiff(session *mergeview.Session, opts cli.Options) ([]string, []string, []string, []conflictRange, bool) {
 	if opts.AllowMissingBase {
 		return nil, nil, nil, nil, false
 	}
@@ -409,7 +402,7 @@ func prepareFullDiff(doc markers.Document, opts cli.Options) ([]string, []string
 		return nil, nil, nil, nil, false
 	}
 
-	ranges, ok := computeConflictRanges(doc, baseLines, oursLines, theirsLines)
+	ranges, ok := computeConflictRangesSession(session, baseLines, oursLines, theirsLines)
 	if !ok {
 		return nil, nil, nil, nil, false
 	}
@@ -458,10 +451,16 @@ func isTrulyMissingBaseStage(ctx context.Context, mergedPath string) (bool, bool
 	if err != nil {
 		return false, false
 	}
+	if resolved, err := filepath.EvalSymlinks(absMergedPath); err == nil {
+		absMergedPath = resolved
+	}
 
 	repoRoot, err := gitutil.RepoRoot(ctx, filepath.Dir(absMergedPath))
 	if err != nil {
 		return false, false
+	}
+	if resolved, err := filepath.EvalSymlinks(repoRoot); err == nil {
+		repoRoot = resolved
 	}
 
 	relPath, err := filepath.Rel(repoRoot, absMergedPath)
@@ -646,16 +645,17 @@ func (m model) View() string {
 
 	// Header
 	fileName := m.opts.MergedPath
-	conflictStatus := fmt.Sprintf("Conflict %d/%d", m.currentConflict+1, len(m.doc.Conflicts))
+	session := m.currentSession()
+	conflictStatus := fmt.Sprintf("Conflict %d/%d", m.currentConflict+1, len(session.Conflicts))
 	header := headerStyle.Render(fmt.Sprintf("%s - %s", fileName, conflictStatus))
 
 	// Get current conflict
-	if m.currentConflict >= len(m.doc.Conflicts) {
+	if m.currentConflict >= len(session.Conflicts) {
 		return "\n  No conflicts found.\n"
 	}
 
-	ref := m.doc.Conflicts[m.currentConflict]
-	seg, ok := m.doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+	ref := session.Conflicts[m.currentConflict]
+	seg, ok := session.Segments[ref.SegmentIndex].(mergeview.ConflictBlock)
 	if !ok {
 		return "\n  Internal error: invalid conflict segment.\n"
 	}
@@ -758,7 +758,7 @@ func (m *model) applySelectedSide() error {
 			return err
 		}
 		delete(m.manualResolved, m.currentConflict)
-		m.doc = m.state.Document()
+		m.session = m.state.Session()
 		return nil
 	})
 }
@@ -769,7 +769,7 @@ func (m *model) applyResolution(resolution markers.Resolution) error {
 			return err
 		}
 		delete(m.manualResolved, m.currentConflict)
-		m.doc = m.state.Document()
+		m.session = m.state.Session()
 		return nil
 	})
 }
@@ -780,7 +780,7 @@ func (m *model) applyAll(resolution markers.Resolution) error {
 			return err
 		}
 		m.manualResolved = map[int][]byte{}
-		m.doc = m.state.Document()
+		m.session = m.state.Session()
 		return nil
 	})
 }
@@ -797,7 +797,7 @@ func (m *model) handleCtrlC() (tea.Cmd, error) {
 }
 
 func (m *model) handleNextConflict() (tea.Cmd, error) {
-	if m.currentConflict < len(m.doc.Conflicts)-1 {
+	if m.currentConflict < len(m.currentSession().Conflicts)-1 {
 		m.currentConflict++
 		m.pendingScroll = true
 		m.updateViewports()
@@ -942,7 +942,7 @@ func (m *model) handleWrite() (tea.Cmd, error) {
 	if err := m.writeResolved(); err != nil {
 		return nil, fmt.Errorf("failed to write resolved: %w", err)
 	}
-	m.doc = m.state.Document()
+	m.session = m.state.Session()
 	m.updateViewports()
 	return m.showToast("Saved", 2), nil
 }
@@ -952,7 +952,8 @@ func (m *model) handleEdit() (tea.Cmd, error) {
 }
 
 func (m *model) updateViewports() {
-	if m.currentConflict >= len(m.doc.Conflicts) {
+	session := m.currentSession()
+	if m.currentConflict >= len(session.Conflicts) {
 		return
 	}
 
@@ -990,7 +991,7 @@ func (m *model) updateViewports() {
 	var theirsLines []lineInfo
 	var theirsStart int
 	useFullDiff := m.useFullDiff
-	if useFullDiff && len(m.conflictRanges) != len(m.doc.Conflicts) {
+	if useFullDiff && len(m.conflictRanges) != len(session.Conflicts) {
 		useFullDiff = false
 	}
 
@@ -998,11 +999,11 @@ func (m *model) updateViewports() {
 		oursEntries := diffEntries(m.baseLines, m.oursLines)
 		theirsEntries := diffEntries(m.baseLines, m.theirsLines)
 		markConflictedInRanges(&oursEntries, &theirsEntries, m.conflictRanges)
-		oursLines, oursStart = buildPaneLinesFromEntries(m.doc, paneOurs, m.currentConflict, m.selectedSide, oursEntries, m.conflictRanges)
-		theirsLines, theirsStart = buildPaneLinesFromEntries(m.doc, paneTheirs, m.currentConflict, m.selectedSide, theirsEntries, m.conflictRanges)
+		oursLines, oursStart = buildPaneLinesFromEntriesSession(session, paneOurs, m.currentConflict, m.selectedSide, oursEntries, m.conflictRanges)
+		theirsLines, theirsStart = buildPaneLinesFromEntriesSession(session, paneTheirs, m.currentConflict, m.selectedSide, theirsEntries, m.conflictRanges)
 	} else {
-		oursLines, oursStart = buildPaneLinesFromDoc(m.doc, paneOurs, m.currentConflict, m.selectedSide)
-		theirsLines, theirsStart = buildPaneLinesFromDoc(m.doc, paneTheirs, m.currentConflict, m.selectedSide)
+		oursLines, oursStart = buildPaneLinesFromSession(session, paneOurs, m.currentConflict, m.selectedSide)
+		theirsLines, theirsStart = buildPaneLinesFromSession(session, paneTheirs, m.currentConflict, m.selectedSide)
 	}
 	oursContent := renderLines(oursLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles, false)
 	m.viewportOurs.SetContent(oursContent)
@@ -1021,11 +1022,11 @@ func (m *model) updateViewports() {
 	var resultLines []lineInfo
 	var resultStart int
 	if useFullDiff {
-		previewLines, forced, resultRanges := buildResultPreviewLines(m.doc, m.selectedSide, m.manualResolved, m.currentConflict)
+		previewLines, forced, resultRanges := buildResultPreviewLinesSession(session, m.selectedSide, m.manualResolved, m.currentConflict)
 		resultEntries := diffEntries(m.baseLines, previewLines)
 		resultLines, resultStart = buildResultLinesFromEntries(resultEntries, resultRanges, m.currentConflict, forced)
 	} else {
-		resultLines, resultStart = buildResultLines(m.doc, m.currentConflict, m.selectedSide, m.manualResolved)
+		resultLines, resultStart = buildResultLinesSession(session, m.currentConflict, m.selectedSide, m.manualResolved)
 	}
 	resultContent := renderLines(resultLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles, true)
 	m.viewportResult.SetContent(resultContent)
@@ -1068,7 +1069,7 @@ func (m *model) scrollToTop() {
 }
 
 func (m *model) scrollToSelectedHunkStart() {
-	if m.currentConflict >= len(m.doc.Conflicts) {
+	if m.currentConflict >= len(m.currentSession().Conflicts) {
 		m.pendingScroll = false
 		return
 	}
@@ -1148,11 +1149,11 @@ func (m *model) writeResolved() error {
 
 	// Verify no conflict markers remain
 	if !allowUnresolved {
-		postDoc, err := markers.Parse(resolved)
+		postSession, err := mergeview.ParseSession(resolved)
 		if err != nil {
 			return fmt.Errorf("post-parse merged: %w", err)
 		}
-		if len(postDoc.Conflicts) != 0 {
+		if len(postSession.Conflicts) != 0 {
 			return fmt.Errorf("resolution output still contains conflict markers")
 		}
 	}
@@ -1893,7 +1894,6 @@ func (m *model) captureResolverSnapshot() resolverSnapshot {
 func (m *model) restoreResolverSnapshot(snapshot resolverSnapshot) {
 	m.state.ReplaceSession(snapshot.session)
 	m.session = m.state.Session()
-	m.doc = m.state.Document()
 	m.manualResolved = cloneManualResolved(snapshot.manualResolved)
 }
 
@@ -1927,13 +1927,5 @@ func (m model) redoDepth() int {
 }
 
 func (m *model) currentSession() *mergeview.Session {
-	if m.session != nil {
-		return m.session
-	}
-	session, err := mergeview.SessionFromDocument(m.doc)
-	if err != nil {
-		return nil
-	}
-	m.session = session
-	return session
+	return m.session
 }

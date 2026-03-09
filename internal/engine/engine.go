@@ -19,13 +19,13 @@ func CheckResolvedFile(mergedPath string) (bool, error) {
 		return false, fmt.Errorf("read merged: %w", err)
 	}
 
-	doc, err := markers.Parse(data)
+	session, err := mergeview.ParseSession(data)
 	if err != nil {
 		// Treat malformed markers as an error to avoid false success.
 		return false, err
 	}
 
-	return len(doc.Conflicts) == 0, nil
+	return len(session.Conflicts) == 0, nil
 }
 
 func ApplyAllAndWrite(ctx context.Context, opts cli.Options) error {
@@ -37,11 +37,11 @@ func ApplyAllAndWrite(ctx context.Context, opts cli.Options) error {
 	if err != nil {
 		return fmt.Errorf("read merged: %w", err)
 	}
-	mergedDoc, err := markers.Parse(mergedBytes)
+	mergedSession, err := mergeview.ParseSession(mergedBytes)
 	if err != nil {
 		return err
 	}
-	if len(mergedDoc.Conflicts) == 0 {
+	if len(mergedSession.Conflicts) == 0 {
 		// Per plan: no conflicts detected → exit 0 without writing.
 		return nil
 	}
@@ -50,12 +50,11 @@ func ApplyAllAndWrite(ctx context.Context, opts cli.Options) error {
 	if err != nil {
 		return err
 	}
-	viewDoc := session.Document()
-	if len(viewDoc.Conflicts) == 0 {
+	if len(session.Conflicts) == 0 {
 		return fmt.Errorf("computed diff3 view has no conflicts but %s contains conflict markers", opts.MergedPath)
 	}
 
-	if err := ValidateBaseCompleteness(viewDoc); err != nil {
+	if err := ValidateBaseCompletenessSession(session); err != nil {
 		return fmt.Errorf("base display validation failed: %w", err)
 	}
 
@@ -85,11 +84,11 @@ func ApplyAllAndWrite(ctx context.Context, opts cli.Options) error {
 	}
 
 	// Verify no conflict markers remain.
-	postDoc, err := markers.Parse(resolved)
+	postSession, err := mergeview.ParseSession(resolved)
 	if err != nil {
 		return fmt.Errorf("post-parse merged: %w", err)
 	}
-	if len(postDoc.Conflicts) != 0 {
+	if len(postSession.Conflicts) != 0 {
 		return errors.New("resolution output still contains conflict markers")
 	}
 

@@ -6,29 +6,27 @@ import (
 	"github.com/chojs23/ec/internal/markers"
 )
 
-func TestSessionFromDocumentRoundTrip(t *testing.T) {
-	doc, err := markers.Parse([]byte("line1\n<<<<<<< HEAD\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> branch\nline2\n"))
+func TestParseSession(t *testing.T) {
+	session, err := ParseSession([]byte("line1\n<<<<<<< HEAD\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> branch\nline2\n"))
 	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
+		t.Fatalf("ParseSession failed: %v", err)
 	}
-	session, err := SessionFromDocument(doc)
-	if err != nil {
-		t.Fatalf("SessionFromDocument failed: %v", err)
+	if len(session.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1", len(session.Conflicts))
 	}
-	roundTrip := session.Document()
-	if !markers.DocumentsEqual(doc, roundTrip) {
-		t.Fatalf("round trip document mismatch")
+	block := session.Segments[session.Conflicts[0].SegmentIndex].(ConflictBlock)
+	if string(block.Ours) != "ours\n" || string(block.Base) != "base\n" || string(block.Theirs) != "theirs\n" {
+		t.Fatalf("block mismatch: ours=%q base=%q theirs=%q", string(block.Ours), string(block.Base), string(block.Theirs))
+	}
+	if block.Labels.OursLabel != "HEAD" || block.Labels.BaseLabel != "base" || block.Labels.TheirsLabel != "branch" {
+		t.Fatalf("labels mismatch: %+v", block.Labels)
 	}
 }
 
 func TestSessionApplyAll(t *testing.T) {
-	doc, err := markers.Parse([]byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n"))
+	session, err := ParseSession([]byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n"))
 	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
-	}
-	session, err := SessionFromDocument(doc)
-	if err != nil {
-		t.Fatalf("SessionFromDocument failed: %v", err)
+		t.Fatalf("ParseSession failed: %v", err)
 	}
 	if err := session.ApplyAll(markers.ResolutionBoth); err != nil {
 		t.Fatalf("ApplyAll failed: %v", err)

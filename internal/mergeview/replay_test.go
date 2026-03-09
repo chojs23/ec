@@ -1,19 +1,11 @@
 package mergeview
 
-import (
-	"testing"
-
-	"github.com/chojs23/ec/internal/markers"
-)
+import "testing"
 
 func TestReplayMergedResultAndRenderOutput(t *testing.T) {
-	doc, err := markers.Parse([]byte("start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nend\n"))
+	session, err := ParseSession([]byte("start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nend\n"))
 	if err != nil {
-		t.Fatalf("Parse failed: %v", err)
-	}
-	session, err := SessionFromDocument(doc)
-	if err != nil {
-		t.Fatalf("SessionFromDocument failed: %v", err)
+		t.Fatalf("ParseSession failed: %v", err)
 	}
 	replayed, manual, labels, known, err := ReplayMergedResult(session, []byte("start\nmanual\nend\n"))
 	if err != nil {
