@@ -9,9 +9,6 @@ import (
 	"github.com/chojs23/ec/internal/markers"
 )
 
-// LoadCanonicalDocument builds the canonical conflict document from the explicit
-// base/local/remote inputs. This keeps conflict structure anchored to the stage
-// files instead of the merged working copy.
 func LoadCanonicalDocument(ctx context.Context, opts cli.Options) (markers.Document, error) {
 	diff3Bytes, err := gitmerge.MergeFileDiff3(ctx, opts.LocalPath, opts.BasePath, opts.RemotePath)
 	if err != nil {
@@ -24,4 +21,12 @@ func LoadCanonicalDocument(ctx context.Context, opts cli.Options) (markers.Docum
 	}
 
 	return doc, nil
+}
+
+func LoadCanonicalSession(ctx context.Context, opts cli.Options) (*Session, error) {
+	doc, err := LoadCanonicalDocument(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return SessionFromDocument(doc)
 }

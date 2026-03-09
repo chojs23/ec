@@ -46,10 +46,11 @@ func ApplyAllAndWrite(ctx context.Context, opts cli.Options) error {
 		return nil
 	}
 
-	viewDoc, err := mergeview.LoadCanonicalDocument(ctx, opts)
+	session, err := mergeview.LoadCanonicalSession(ctx, opts)
 	if err != nil {
 		return err
 	}
+	viewDoc := session.Document()
 	if len(viewDoc.Conflicts) == 0 {
 		return fmt.Errorf("computed diff3 view has no conflicts but %s contains conflict markers", opts.MergedPath)
 	}
@@ -58,16 +59,11 @@ func ApplyAllAndWrite(ctx context.Context, opts cli.Options) error {
 		return fmt.Errorf("base display validation failed: %w", err)
 	}
 
-	for _, ref := range viewDoc.Conflicts {
-		seg, ok := viewDoc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
-		if !ok {
-			return fmt.Errorf("internal: conflict index %d is not a ConflictSegment", ref.SegmentIndex)
-		}
-		seg.Resolution = markers.Resolution(opts.ApplyAll)
-		viewDoc.Segments[ref.SegmentIndex] = seg
+	if err := session.ApplyAll(markers.Resolution(opts.ApplyAll)); err != nil {
+		return err
 	}
 
-	resolved, err := markers.RenderResolved(viewDoc)
+	resolved, err := session.Preview()
 	if err != nil {
 		return err
 	}

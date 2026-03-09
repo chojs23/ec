@@ -11,6 +11,7 @@ import (
 )
 
 type resolverDocumentState struct {
+	session          *mergeview.Session
 	doc              markers.Document
 	manualResolved   map[int][]byte
 	mergedLabels     []conflictLabels
@@ -18,12 +19,14 @@ type resolverDocumentState struct {
 }
 
 func loadResolverDocumentState(ctx context.Context, opts cli.Options) (resolverDocumentState, error) {
-	canonicalDoc, err := mergeview.LoadCanonicalDocument(ctx, opts)
+	canonicalSession, err := mergeview.LoadCanonicalSession(ctx, opts)
 	if err != nil {
 		return resolverDocumentState{}, err
 	}
+	canonicalDoc := canonicalSession.Document()
 
 	state := resolverDocumentState{
+		session:          canonicalSession,
 		doc:              canonicalDoc,
 		manualResolved:   map[int][]byte{},
 		mergedLabels:     make([]conflictLabels, len(canonicalDoc.Conflicts)),
@@ -39,7 +42,12 @@ func loadResolverDocumentState(ctx context.Context, opts cli.Options) (resolverD
 	if err != nil {
 		return resolverDocumentState{}, fmt.Errorf("apply merged resolutions: %w", err)
 	}
+	replayedSession, err := mergeview.SessionFromDocument(updated)
+	if err != nil {
+		return resolverDocumentState{}, err
+	}
 
+	state.session = replayedSession
 	state.doc = updated
 	state.manualResolved = manual
 	state.mergedLabels = labels

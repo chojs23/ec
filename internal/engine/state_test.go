@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/chojs23/ec/internal/markers"
+	"github.com/chojs23/ec/internal/mergeview"
 )
 
 func TestNewState(t *testing.T) {
@@ -56,7 +57,8 @@ line3
 			t.Fatalf("ApplyResolution failed: %v", err)
 		}
 
-		seg := state.doc.Segments[state.doc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
+		currentDoc := state.Document()
+		seg := currentDoc.Segments[currentDoc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
 		if seg.Resolution != markers.ResolutionOurs {
 			t.Errorf("expected resolution ours, got %q", seg.Resolution)
 		}
@@ -68,7 +70,8 @@ line3
 			t.Fatalf("ApplyResolution failed: %v", err)
 		}
 
-		seg := state.doc.Segments[state.doc.Conflicts[1].SegmentIndex].(markers.ConflictSegment)
+		currentDoc := state.Document()
+		seg := currentDoc.Segments[currentDoc.Conflicts[1].SegmentIndex].(markers.ConflictSegment)
 		if seg.Resolution != markers.ResolutionTheirs {
 			t.Errorf("expected resolution theirs, got %q", seg.Resolution)
 		}
@@ -80,7 +83,8 @@ line3
 			t.Fatalf("ApplyResolution failed: %v", err)
 		}
 
-		seg := state.doc.Segments[state.doc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
+		currentDoc := state.Document()
+		seg := currentDoc.Segments[currentDoc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
 		if seg.Resolution != markers.ResolutionNone {
 			t.Errorf("expected resolution none, got %q", seg.Resolution)
 		}
@@ -145,8 +149,9 @@ line3
 		t.Fatalf("ApplyAll failed: %v", err)
 	}
 
-	for i, ref := range state.doc.Conflicts {
-		seg := state.doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+	currentDoc := state.Document()
+	for i, ref := range currentDoc.Conflicts {
+		seg := currentDoc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
 		if seg.Resolution != markers.ResolutionTheirs {
 			t.Errorf("conflict %d expected theirs, got %q", i, seg.Resolution)
 		}
@@ -367,13 +372,14 @@ line2
 	}
 
 	retrievedDoc := state.Document()
+	stateDoc := state.Document()
 
-	if len(retrievedDoc.Conflicts) != len(state.doc.Conflicts) {
-		t.Errorf("Document() conflicts mismatch: got %d, want %d", len(retrievedDoc.Conflicts), len(state.doc.Conflicts))
+	if len(retrievedDoc.Conflicts) != len(stateDoc.Conflicts) {
+		t.Errorf("Document() conflicts mismatch: got %d, want %d", len(retrievedDoc.Conflicts), len(stateDoc.Conflicts))
 	}
 
-	if len(retrievedDoc.Segments) != len(state.doc.Segments) {
-		t.Errorf("Document() segments mismatch: got %d, want %d", len(retrievedDoc.Segments), len(state.doc.Segments))
+	if len(retrievedDoc.Segments) != len(stateDoc.Segments) {
+		t.Errorf("Document() segments mismatch: got %d, want %d", len(retrievedDoc.Segments), len(stateDoc.Segments))
 	}
 }
 
@@ -403,8 +409,31 @@ line2
 	edited.Segments[edited.Conflicts[0].SegmentIndex] = editedSeg
 
 	state.ReplaceDocument(edited)
-	seg := state.doc.Segments[state.doc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
+	currentDoc := state.Document()
+	seg := currentDoc.Segments[currentDoc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
 	if seg.Resolution != markers.ResolutionOurs {
 		t.Fatalf("Resolution = %q, want %q after replace", seg.Resolution, markers.ResolutionOurs)
+	}
+}
+
+func TestNewStateFromSession(t *testing.T) {
+	doc, err := markers.Parse([]byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n"))
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	session, err := mergeview.SessionFromDocument(doc)
+	if err != nil {
+		t.Fatalf("SessionFromDocument failed: %v", err)
+	}
+	state, err := NewStateFromSession(session)
+	if err != nil {
+		t.Fatalf("NewStateFromSession failed: %v", err)
+	}
+	if err := state.ApplyResolution(0, markers.ResolutionTheirs); err != nil {
+		t.Fatalf("ApplyResolution failed: %v", err)
+	}
+	seg := state.Session().Document().Segments[1].(markers.ConflictSegment)
+	if seg.Resolution != markers.ResolutionTheirs {
+		t.Fatalf("Resolution = %q, want %q", seg.Resolution, markers.ResolutionTheirs)
 	}
 }

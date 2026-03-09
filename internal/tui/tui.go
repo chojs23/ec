@@ -233,7 +233,7 @@ func Run(ctx context.Context, opts cli.Options) error {
 	}
 
 	// Initialize state
-	state, err := engine.NewState(doc)
+	state, err := engine.NewStateFromSession(resolverState.session)
 	if err != nil {
 		return fmt.Errorf("failed to create state: %w", err)
 	}
@@ -372,7 +372,7 @@ func (m *model) reloadFromFile() error {
 	}
 
 	return m.applyResolverMutation(func() error {
-		m.state.ReplaceDocument(doc)
+		m.state.ReplaceSession(resolverState.session)
 		m.doc = m.state.Document()
 		m.manualResolved = resolverState.manualResolved
 		m.mergedLabels = resolverState.mergedLabels
