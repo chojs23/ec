@@ -115,6 +115,61 @@ func TestApplyAllAndWrite_NoConflictsNoWrite(t *testing.T) {
 	}
 }
 
+func TestApplyAllAndWriteUsesCanonicalThreeWayInputsOverMergedMarkers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	baseContent := "line1\nbase content\nline3\n"
+	localContent := "line1\nlocal change\nline3\n"
+	remoteContent := "line1\nremote change\nline3\n"
+	mergedContent := "line1\n<<<<<<< ours-label\nlocal from merged marker\n=======\nremote from merged marker\n>>>>>>> theirs-label\nline3\n"
+
+	if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte(localContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remotePath, []byte(remoteContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mergedPath, []byte(mergedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	opts := cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+		ApplyAll:   "ours",
+	}
+
+	if err := ApplyAllAndWrite(ctx, opts); err != nil {
+		t.Fatalf("ApplyAllAndWrite failed: %v", err)
+	}
+
+	resolved, err := os.ReadFile(mergedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(resolved) != localContent {
+		t.Fatalf("resolved output mismatch: got %q want %q", string(resolved), localContent)
+	}
+}
+
 func TestCheckResolvedFile(t *testing.T) {
 	tmpDir := t.TempDir()
 

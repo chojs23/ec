@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 
 	"github.com/chojs23/ec/internal/cli"
-	"github.com/chojs23/ec/internal/gitmerge"
 	"github.com/chojs23/ec/internal/markers"
+	"github.com/chojs23/ec/internal/mergeview"
 )
 
 func CheckResolvedFile(mergedPath string) (bool, error) {
@@ -46,11 +46,7 @@ func ApplyAllAndWrite(ctx context.Context, opts cli.Options) error {
 		return nil
 	}
 
-	mergeViewBytes, err := gitmerge.MergeFileDiff3(ctx, opts.LocalPath, opts.BasePath, opts.RemotePath)
-	if err != nil {
-		return err
-	}
-	viewDoc, err := markers.Parse(mergeViewBytes)
+	viewDoc, err := mergeview.LoadCanonicalDocument(ctx, opts)
 	if err != nil {
 		return err
 	}

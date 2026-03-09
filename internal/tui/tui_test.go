@@ -18,6 +18,7 @@ import (
 	"github.com/chojs23/ec/internal/engine"
 	"github.com/chojs23/ec/internal/gitmerge"
 	"github.com/chojs23/ec/internal/markers"
+	"github.com/chojs23/ec/internal/mergeview"
 )
 
 func TestModelQuitBackToSelector(t *testing.T) {
@@ -268,7 +269,7 @@ func TestReloadFromFilePreservesManualResolution(t *testing.T) {
 	}
 }
 
-func TestLoadResolverDocumentStatePrefersValidMergedMarkers(t *testing.T) {
+func TestLoadResolverDocumentStateKeepsCanonicalConflictStructureWithMergedMarkers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration-style test in short mode")
 	}
@@ -327,17 +328,20 @@ func TestLoadResolverDocumentStatePrefersValidMergedMarkers(t *testing.T) {
 	}
 
 	seg := conflictSegment(t, state.doc, 0)
-	if string(seg.Ours) != "local from merged\n" {
+	if string(seg.Ours) != "local line\n" {
 		t.Fatalf("seg.Ours = %q", string(seg.Ours))
 	}
 	if string(seg.Base) != "base line\n" {
 		t.Fatalf("seg.Base = %q", string(seg.Base))
 	}
-	if string(seg.Theirs) != "remote from merged\n" {
+	if string(seg.Theirs) != "remote line\n" {
 		t.Fatalf("seg.Theirs = %q", string(seg.Theirs))
 	}
-	if seg.OursLabel != "ours-label" || seg.TheirsLabel != "theirs-label" {
-		t.Fatalf("labels = %q/%q", seg.OursLabel, seg.TheirsLabel)
+	if !state.mergedLabelKnown[0] {
+		t.Fatalf("mergedLabelKnown[0] = false, want true")
+	}
+	if state.mergedLabels[0].OursLabel != "ours-label" || state.mergedLabels[0].TheirsLabel != "theirs-label" {
+		t.Fatalf("mergedLabels[0] = %+v", state.mergedLabels[0])
 	}
 
 	outro, ok := state.doc.Segments[2].(markers.TextSegment)
@@ -368,7 +372,7 @@ func TestLoadResolverDocumentStateFallsBackForMixedResolvedMergedFile(t *testing
 	baseContent := "top\nbase1\nmiddle\nbase2\nbottom\n"
 	localContent := "top\nlocal1\nmiddle\nlocal2\nbottom\n"
 	remoteContent := "top\nremote1\nmiddle\nremote2\nbottom\n"
-	mergedContent := "top\nlocal1\nmiddle edited\n<<<<<<< ours\nlocal2\n=======\nremote2\n>>>>>>> theirs\nbottom edited\n"
+	mergedContent := "top\nlocal1\nmiddle\n<<<<<<< ours\nlocal2\n=======\nremote2\n>>>>>>> theirs\nbottom\n"
 
 	if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
 		t.Fatal(err)
@@ -395,10 +399,25 @@ func TestLoadResolverDocumentStateFallsBackForMixedResolvedMergedFile(t *testing
 	if len(state.doc.Conflicts) != 2 {
 		t.Fatalf("conflicts = %d, want 2", len(state.doc.Conflicts))
 	}
+	first := conflictSegment(t, state.doc, 0)
+	if first.Resolution != markers.ResolutionOurs {
+		t.Fatalf("first resolution = %q, want %q", first.Resolution, markers.ResolutionOurs)
+	}
+	middleText, ok := state.doc.Segments[2].(markers.TextSegment)
+	if !ok {
+		t.Fatalf("segment 2 = %T, want TextSegment", state.doc.Segments[2])
+	}
+	if string(middleText.Bytes) != "middle\n" {
+		t.Fatalf("middle text = %q", string(middleText.Bytes))
+	}
+	second := conflictSegment(t, state.doc, 1)
+	if second.Resolution != markers.ResolutionUnset {
+		t.Fatalf("second resolution = %q, want unset", second.Resolution)
+	}
 
 }
 
-func TestReloadFromFilePrefersValidMergedMarkers(t *testing.T) {
+func TestReloadFromFileKeepsCanonicalConflictStructureWithMergedMarkers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration-style test in short mode")
 	}
@@ -432,14 +451,14 @@ func TestReloadFromFilePrefersValidMergedMarkers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	canonicalDoc, err := loadCanonicalDiff3Document(ctx, cli.Options{
+	canonicalDoc, err := mergeview.LoadCanonicalDocument(ctx, cli.Options{
 		BasePath:   basePath,
 		LocalPath:  localPath,
 		RemotePath: remotePath,
 		MergedPath: mergedPath,
 	})
 	if err != nil {
-		t.Fatalf("loadCanonicalDiff3Document error = %v", err)
+		t.Fatalf("LoadCanonicalDocument error = %v", err)
 	}
 	resolverState, err := engine.NewState(canonicalDoc)
 	if err != nil {
@@ -466,11 +485,17 @@ func TestReloadFromFilePrefersValidMergedMarkers(t *testing.T) {
 	}
 
 	seg := conflictSegment(t, m.doc, 0)
-	if string(seg.Ours) != "local from merged\n" {
+	if string(seg.Ours) != "local line\n" {
 		t.Fatalf("seg.Ours = %q", string(seg.Ours))
 	}
-	if seg.OursLabel != "ours-label" || seg.TheirsLabel != "theirs-label" {
-		t.Fatalf("labels = %q/%q", seg.OursLabel, seg.TheirsLabel)
+	if string(seg.Theirs) != "remote line\n" {
+		t.Fatalf("seg.Theirs = %q", string(seg.Theirs))
+	}
+	if !m.mergedLabelKnown[0] {
+		t.Fatalf("mergedLabelKnown[0] = false, want true")
+	}
+	if m.mergedLabels[0].OursLabel != "ours-label" || m.mergedLabels[0].TheirsLabel != "theirs-label" {
+		t.Fatalf("mergedLabels[0] = %+v", m.mergedLabels[0])
 	}
 	if len(m.manualResolved) != 0 {
 		t.Fatalf("manualResolved = %d, want 0", len(m.manualResolved))
