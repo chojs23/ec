@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/chojs23/ec/internal/markers"
+	"github.com/chojs23/ec/internal/mergeview"
 )
 
 func TestConnectorForResult(t *testing.T) {
@@ -24,8 +25,12 @@ func TestBuildResultLinesManualResolved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error = %v", err)
 	}
+	session, err := mergeview.SessionFromDocument(doc)
+	if err != nil {
+		t.Fatalf("SessionFromDocument error = %v", err)
+	}
 	manual := map[int][]byte{0: []byte("manual\n")}
-	lines, _ := buildResultLines(doc, 0, selectedOurs, manual)
+	lines, _ := buildResultLinesSession(session, 0, selectedOurs, manual)
 	if len(lines) == 0 {
 		t.Fatalf("expected lines")
 	}
@@ -52,20 +57,16 @@ func TestApplyMergedResolutionsManualHunk(t *testing.T) {
 	}
 
 	merged := []byte("header\nmanual1\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nfooter\n")
-	updated, manual, _, _, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error = %v", err)
-	}
+	updated, manual, _, _ := replayMergedSession(t, doc, merged)
 	if len(manual) != 1 {
 		t.Fatalf("manualResolved count = %d, want 1", len(manual))
 	}
 	if _, ok := manual[0]; !ok {
 		t.Fatalf("manualResolved missing conflict 0")
 	}
-	ref := updated.Conflicts[0]
-	seg := updated.Segments[ref.SegmentIndex].(markers.ConflictSegment)
-	if seg.Resolution != markers.ResolutionUnset {
-		t.Fatalf("conflict 0 resolution = %q, want unset", seg.Resolution)
+	block := conflictBlock(t, updated, 0)
+	if block.Resolution != markers.ResolutionUnset {
+		t.Fatalf("conflict 0 resolution = %q, want unset", block.Resolution)
 	}
 }
 
@@ -117,6 +118,10 @@ func TestBuildPaneLinesFromEntriesMarkers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
+	session, err := mergeview.SessionFromDocument(doc)
+	if err != nil {
+		t.Fatalf("SessionFromDocument error: %v", err)
+	}
 
 	baseLines := []string{"start", "base", "end"}
 	oursLines := []string{"start", "ours", "end"}
@@ -128,7 +133,7 @@ func TestBuildPaneLinesFromEntriesMarkers(t *testing.T) {
 	}
 
 	entries := diffEntries(baseLines, oursLines)
-	lines, _ := buildPaneLinesFromEntries(doc, paneOurs, 0, selectedOurs, entries, ranges)
+	lines, _ := buildPaneLinesFromEntriesSession(session, paneOurs, 0, selectedOurs, entries, ranges)
 
 	foundStart := false
 	foundEnd := false
@@ -153,6 +158,10 @@ func TestBuildPaneLinesFromEntriesUsesSideRangeForNonRemoved(t *testing.T) {
 		},
 		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
 	}
+	session, err := mergeview.SessionFromDocument(doc)
+	if err != nil {
+		t.Fatalf("SessionFromDocument error: %v", err)
+	}
 
 	entries := []lineEntry{
 		{text: "package tui", category: categoryDefault, baseIndex: 0},
@@ -174,7 +183,7 @@ func TestBuildPaneLinesFromEntriesUsesSideRangeForNonRemoved(t *testing.T) {
 		theirsEnd:   7,
 	}}
 
-	lines, _ := buildPaneLinesFromEntries(doc, paneOurs, 0, selectedOurs, entries, ranges)
+	lines, _ := buildPaneLinesFromEntriesSession(session, paneOurs, 0, selectedOurs, entries, ranges)
 
 	startIdx := -1
 	for i, line := range lines {
@@ -232,7 +241,11 @@ func TestBuildResultPreviewLinesUsesSelection(t *testing.T) {
 		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
 	}
 
-	lines, forced, ranges := buildResultPreviewLines(doc, selectedTheirs, nil, 0)
+	session, err := mergeview.SessionFromDocument(doc)
+	if err != nil {
+		t.Fatalf("SessionFromDocument error: %v", err)
+	}
+	lines, forced, ranges := buildResultPreviewLinesSession(session, selectedTheirs, nil, 0)
 	if len(forced) != 0 {
 		t.Fatalf("forced len = %d, want 0", len(forced))
 	}
@@ -268,7 +281,11 @@ func TestBuildResultPreviewLinesManualAndNone(t *testing.T) {
 	}
 
 	manual := map[int][]byte{0: []byte("manual\n")}
-	lines, forced, ranges := buildResultPreviewLines(doc, selectedOurs, manual, 1)
+	session, err := mergeview.SessionFromDocument(doc)
+	if err != nil {
+		t.Fatalf("SessionFromDocument error: %v", err)
+	}
+	lines, forced, ranges := buildResultPreviewLinesSession(session, selectedOurs, manual, 1)
 	if len(lines) != 5 {
 		t.Fatalf("lines len = %d, want 5", len(lines))
 	}

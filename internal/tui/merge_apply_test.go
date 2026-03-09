@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/chojs23/ec/internal/markers"
+	"github.com/chojs23/ec/internal/mergeview"
 )
 
 func parseSingleConflictDoc(t *testing.T) markers.Document {
@@ -15,6 +16,34 @@ func parseSingleConflictDoc(t *testing.T) markers.Document {
 		t.Fatalf("Parse error: %v", err)
 	}
 	return doc
+}
+
+func sessionFromDoc(t *testing.T, doc markers.Document) *mergeview.Session {
+	t.Helper()
+	session, err := mergeview.SessionFromDocument(doc)
+	if err != nil {
+		t.Fatalf("SessionFromDocument error: %v", err)
+	}
+	return session
+}
+
+func replayMergedSession(t *testing.T, doc markers.Document, merged []byte) (*mergeview.Session, map[int][]byte, []mergeview.Labels, []bool) {
+	t.Helper()
+	replayed, manual, labels, known, err := mergeview.ReplayMergedResult(sessionFromDoc(t, doc), merged)
+	if err != nil {
+		t.Fatalf("ReplayMergedResult error: %v", err)
+	}
+	return replayed, manual, labels, known
+}
+
+func conflictBlock(t *testing.T, session *mergeview.Session, index int) mergeview.ConflictBlock {
+	t.Helper()
+	ref := session.Conflicts[index]
+	block, ok := session.Segments[ref.SegmentIndex].(mergeview.ConflictBlock)
+	if !ok {
+		t.Fatalf("expected conflict block")
+	}
+	return block
 }
 
 func conflictSegment(t *testing.T, doc markers.Document, index int) markers.ConflictSegment {
@@ -48,29 +77,23 @@ func TestApplyMergedResolutionsMatchesSelections(t *testing.T) {
 
 	for _, tc := range testCases {
 		doc := parseSingleConflictDoc(t)
-		updated, manual, _, _, err := applyMergedResolutions(doc, []byte(tc.merged))
-		if err != nil {
-			t.Fatalf("%s: applyMergedResolutions error: %v", tc.name, err)
-		}
+		updated, manual, _, _ := replayMergedSession(t, doc, []byte(tc.merged))
 		if len(manual) != 0 {
 			t.Fatalf("%s: expected no manual resolutions", tc.name)
 		}
-		seg := conflictSegment(t, updated, 0)
-		if seg.Resolution != tc.resolution {
-			t.Fatalf("%s: resolution = %q, want %q", tc.name, seg.Resolution, tc.resolution)
+		block := conflictBlock(t, updated, 0)
+		if block.Resolution != tc.resolution {
+			t.Fatalf("%s: resolution = %q, want %q", tc.name, block.Resolution, tc.resolution)
 		}
 	}
 }
 
 func TestApplyMergedResolutionsManualEdit(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
-	updated, manual, _, _, err := applyMergedResolutions(doc, []byte("start\nmanual\nend\n"))
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
-	seg := conflictSegment(t, updated, 0)
-	if seg.Resolution != markers.ResolutionUnset {
-		t.Fatalf("resolution = %q, want unset", seg.Resolution)
+	updated, manual, _, _ := replayMergedSession(t, doc, []byte("start\nmanual\nend\n"))
+	block := conflictBlock(t, updated, 0)
+	if block.Resolution != markers.ResolutionUnset {
+		t.Fatalf("resolution = %q, want unset", block.Resolution)
 	}
 	if got := string(manual[0]); got != "manual\n" {
 		t.Fatalf("manual resolution = %q, want %q", got, "manual\n")
@@ -80,16 +103,13 @@ func TestApplyMergedResolutionsManualEdit(t *testing.T) {
 func TestApplyMergedResolutionsSkipsConflictMarkers(t *testing.T) {
 	merged := "start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nend\n"
 	doc := parseSingleConflictDoc(t)
-	updated, manual, labels, known, err := applyMergedResolutions(doc, []byte(merged))
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, []byte(merged))
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolutions when markers are present")
 	}
-	seg := conflictSegment(t, updated, 0)
-	if seg.Resolution != markers.ResolutionUnset {
-		t.Fatalf("resolution = %q, want unset", seg.Resolution)
+	block := conflictBlock(t, updated, 0)
+	if block.Resolution != markers.ResolutionUnset {
+		t.Fatalf("resolution = %q, want unset", block.Resolution)
 	}
 	if labels[0].OursLabel != "HEAD" || labels[0].TheirsLabel != "branch" {
 		t.Fatalf("labels[0] = %+v, want HEAD/branch", labels[0])
@@ -103,18 +123,15 @@ func TestApplyMergedResolutionsAllowsNonConflictDeletion(t *testing.T) {
 	doc := parseSingleConflictDoc(t)
 	merged := []byte("ours\nend\n")
 
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolutions")
 	}
-	seg := conflictSegment(t, updated, 0)
-	if seg.Resolution != markers.ResolutionOurs {
-		t.Fatalf("resolution = %q, want %q", seg.Resolution, markers.ResolutionOurs)
+	block := conflictBlock(t, updated, 0)
+	if block.Resolution != markers.ResolutionOurs {
+		t.Fatalf("resolution = %q, want %q", block.Resolution, markers.ResolutionOurs)
 	}
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -130,18 +147,15 @@ func TestApplyMergedResolutionsPreservesNonConflictEditsWhenResolved(t *testing.
 	doc := parseSingleConflictDoc(t)
 	merged := []byte("start edited\nextra line\nours\nend changed\n")
 
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolutions")
 	}
-	seg := conflictSegment(t, updated, 0)
-	if seg.Resolution != markers.ResolutionOurs {
-		t.Fatalf("resolution = %q, want %q", seg.Resolution, markers.ResolutionOurs)
+	block := conflictBlock(t, updated, 0)
+	if block.Resolution != markers.ResolutionOurs {
+		t.Fatalf("resolution = %q, want %q", block.Resolution, markers.ResolutionOurs)
 	}
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -161,28 +175,25 @@ func TestApplyMergedResolutionsHandlesEditedSingleLineSeparator(t *testing.T) {
 	}
 
 	merged := []byte("intro\nanchor-one@@\nmanual2\ntail\n")
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 
 	if _, ok := manual[0]; ok {
 		t.Fatalf("conflict 0 should not be manual")
 	}
-	seg0 := conflictSegment(t, updated, 0)
-	if seg0.Resolution != markers.ResolutionNone {
-		t.Fatalf("conflict 0 resolution = %q, want %q", seg0.Resolution, markers.ResolutionNone)
+	block0 := conflictBlock(t, updated, 0)
+	if block0.Resolution != markers.ResolutionNone {
+		t.Fatalf("conflict 0 resolution = %q, want %q", block0.Resolution, markers.ResolutionNone)
 	}
 
 	if got := string(manual[1]); got != "manual2\n" {
 		t.Fatalf("manual[1] = %q, want %q", got, "manual2\\n")
 	}
-	seg1 := conflictSegment(t, updated, 1)
-	if seg1.Resolution != markers.ResolutionUnset {
-		t.Fatalf("conflict 1 resolution = %q, want unset", seg1.Resolution)
+	block1 := conflictBlock(t, updated, 1)
+	if block1.Resolution != markers.ResolutionUnset {
+		t.Fatalf("conflict 1 resolution = %q, want unset", block1.Resolution)
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -202,20 +213,17 @@ func TestApplyMergedResolutionsKeepsDuplicatePrefixOutsideConflict(t *testing.T)
 	}
 
 	merged := []byte("keep\ntail\n")
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolutions")
 	}
 
-	seg := conflictSegment(t, updated, 0)
-	if seg.Resolution != markers.ResolutionNone {
-		t.Fatalf("resolution = %q, want %q", seg.Resolution, markers.ResolutionNone)
+	block := conflictBlock(t, updated, 0)
+	if block.Resolution != markers.ResolutionNone {
+		t.Fatalf("resolution = %q, want %q", block.Resolution, markers.ResolutionNone)
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -235,20 +243,17 @@ func TestApplyMergedResolutionsKeepsFuzzyPrefixOutsideConflict(t *testing.T) {
 	}
 
 	merged := []byte("keep root!\ntail\n")
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolutions")
 	}
 
-	seg := conflictSegment(t, updated, 0)
-	if seg.Resolution != markers.ResolutionNone {
-		t.Fatalf("resolution = %q, want %q", seg.Resolution, markers.ResolutionNone)
+	block := conflictBlock(t, updated, 0)
+	if block.Resolution != markers.ResolutionNone {
+		t.Fatalf("resolution = %q, want %q", block.Resolution, markers.ResolutionNone)
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -268,20 +273,17 @@ func TestApplyMergedResolutionsKeepsDuplicateSuffixOutsideConflict(t *testing.T)
 	}
 
 	merged := []byte("keep\ntail\n")
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolutions")
 	}
 
-	seg := conflictSegment(t, updated, 0)
-	if seg.Resolution != markers.ResolutionNone {
-		t.Fatalf("resolution = %q, want %q", seg.Resolution, markers.ResolutionNone)
+	block := conflictBlock(t, updated, 0)
+	if block.Resolution != markers.ResolutionNone {
+		t.Fatalf("resolution = %q, want %q", block.Resolution, markers.ResolutionNone)
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -301,20 +303,17 @@ func TestApplyMergedResolutionsKeepsEditedAndSkippedTextOutsideConflict(t *testi
 	}
 
 	merged := []byte("intro!\nkeep\ntail\n")
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolutions")
 	}
 
-	seg := conflictSegment(t, updated, 0)
-	if seg.Resolution != markers.ResolutionNone {
-		t.Fatalf("resolution = %q, want %q", seg.Resolution, markers.ResolutionNone)
+	block := conflictBlock(t, updated, 0)
+	if block.Resolution != markers.ResolutionNone {
+		t.Fatalf("resolution = %q, want %q", block.Resolution, markers.ResolutionNone)
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -413,25 +412,22 @@ func TestApplyMergedResolutionsWitrLicenseScenario(t *testing.T) {
 		"      including but not limited to software source code, documentation\n" +
 		"      source, and configuration files.\n")
 
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("manualResolved len = %d, want 0", len(manual))
 	}
 
-	if got := conflictSegment(t, updated, 0).Resolution; got != markers.ResolutionOurs {
+	if got := conflictBlock(t, updated, 0).Resolution; got != markers.ResolutionOurs {
 		t.Fatalf("conflict 0 resolution = %q, want %q", got, markers.ResolutionOurs)
 	}
-	if got := conflictSegment(t, updated, 1).Resolution; got != markers.ResolutionOurs {
+	if got := conflictBlock(t, updated, 1).Resolution; got != markers.ResolutionOurs {
 		t.Fatalf("conflict 1 resolution = %q, want %q", got, markers.ResolutionOurs)
 	}
-	if got := conflictSegment(t, updated, 2).Resolution; got != markers.ResolutionOurs {
+	if got := conflictBlock(t, updated, 2).Resolution; got != markers.ResolutionOurs {
 		t.Fatalf("conflict 2 resolution = %q, want %q", got, markers.ResolutionOurs)
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -485,18 +481,15 @@ func TestApplyMergedResolutionsWitrLicensePartialConflictStaysManual(t *testing.
 		"      including but not limited to software source code, documentation\n" +
 		"      source, and configuration files.\n")
 
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 1 {
 		t.Fatalf("manualResolved len = %d, want 1", len(manual))
 	}
 
-	if got := conflictSegment(t, updated, 1).Resolution; got != markers.ResolutionUnset {
+	if got := conflictBlock(t, updated, 1).Resolution; got != markers.ResolutionUnset {
 		t.Fatalf("conflict 1 resolution = %q, want unset for manual conflict", got)
 	}
-	if got := conflictSegment(t, updated, 2).Resolution; got != markers.ResolutionTheirs {
+	if got := conflictBlock(t, updated, 2).Resolution; got != markers.ResolutionTheirs {
 		t.Fatalf("conflict 2 resolution = %q, want %q", got, markers.ResolutionTheirs)
 	}
 
@@ -511,7 +504,7 @@ func TestApplyMergedResolutionsWitrLicensePartialConflictStaysManual(t *testing.
 		t.Fatalf("manual conflict consumed next conflict output: %q", string(manualBytes))
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -531,21 +524,18 @@ func TestApplyMergedResolutionsKeepsTrueEmptyConflictWithBlankSeparator(t *testi
 	}
 
 	merged := []byte("start\n\ntheirs2\nend\n")
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolutions, got %d: manual=%v", len(manual), manual)
 	}
-	if got := conflictSegment(t, updated, 0).Resolution; got != markers.ResolutionNone {
+	if got := conflictBlock(t, updated, 0).Resolution; got != markers.ResolutionNone {
 		t.Fatalf("conflict 0 resolution = %q, want %q", got, markers.ResolutionNone)
 	}
-	if got := conflictSegment(t, updated, 1).Resolution; got != markers.ResolutionTheirs {
+	if got := conflictBlock(t, updated, 1).Resolution; got != markers.ResolutionTheirs {
 		t.Fatalf("conflict 1 resolution = %q, want %q", got, markers.ResolutionTheirs)
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -565,20 +555,17 @@ func TestApplyMergedResolutionsPrefersSingleNonEmptySideOverBoth(t *testing.T) {
 	}
 
 	merged := []byte("start\nasdsadf\nsource\nend\n")
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolution, got %d", len(manual))
 	}
 
-	seg := conflictSegment(t, updated, 0)
-	if seg.Resolution != markers.ResolutionTheirs {
-		t.Fatalf("resolution = %q, want %q", seg.Resolution, markers.ResolutionTheirs)
+	block := conflictBlock(t, updated, 0)
+	if block.Resolution != markers.ResolutionTheirs {
+		t.Fatalf("resolution = %q, want %q", block.Resolution, markers.ResolutionTheirs)
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -598,19 +585,16 @@ func TestApplyMergedResolutionsEmptyOursReopensAsOurs(t *testing.T) {
 	}
 
 	merged := []byte("start\nend\n")
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolution, got %d", len(manual))
 	}
 
-	if got := conflictSegment(t, updated, 0).Resolution; got != markers.ResolutionOurs {
+	if got := conflictBlock(t, updated, 0).Resolution; got != markers.ResolutionOurs {
 		t.Fatalf("resolution = %q, want %q", got, markers.ResolutionOurs)
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -630,19 +614,16 @@ func TestApplyMergedResolutionsEmptyTheirsReopensAsTheirs(t *testing.T) {
 	}
 
 	merged := []byte("start\nend\n")
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolution, got %d", len(manual))
 	}
 
-	if got := conflictSegment(t, updated, 0).Resolution; got != markers.ResolutionTheirs {
+	if got := conflictBlock(t, updated, 0).Resolution; got != markers.ResolutionTheirs {
 		t.Fatalf("resolution = %q, want %q", got, markers.ResolutionTheirs)
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -662,19 +643,16 @@ func TestApplyMergedResolutionsEmptyBothStaysNone(t *testing.T) {
 	}
 
 	merged := []byte("start\nend\n")
-	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	updated, manual, labels, known := replayMergedSession(t, doc, merged)
 	if len(manual) != 0 {
 		t.Fatalf("expected no manual resolution, got %d", len(manual))
 	}
 
-	if got := conflictSegment(t, updated, 0).Resolution; got != markers.ResolutionNone {
+	if got := conflictBlock(t, updated, 0).Resolution; got != markers.ResolutionNone {
 		t.Fatalf("resolution = %q, want %q", got, markers.ResolutionNone)
 	}
 
-	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	rendered, unresolved, err := mergeview.RenderMergedOutput(updated, manual, labels, known)
 	if err != nil {
 		t.Fatalf("renderMergedOutput error: %v", err)
 	}
@@ -689,10 +667,7 @@ func TestApplyMergedResolutionsEmptyBothStaysNone(t *testing.T) {
 func TestApplyMergedResolutionsAlignsLabelsToOriginalConflictIndex(t *testing.T) {
 	doc := parseMultiConflictDoc(t)
 	merged := []byte("start\nmanual1\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nend\n")
-	_, manual, labels, known, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error: %v", err)
-	}
+	_, manual, labels, known := replayMergedSession(t, doc, merged)
 	if got := string(manual[0]); got != "manual1\n" {
 		t.Fatalf("manual[0] = %q, want %q", got, "manual1\\n")
 	}
@@ -718,12 +693,12 @@ func TestAllResolvedWithManualOverride(t *testing.T) {
 	}
 
 	setConflictResolution(&doc, 0, markers.ResolutionOurs)
-	if allResolved(doc, map[int][]byte{}) {
+	if mergeview.AllResolved(sessionFromDoc(t, doc), map[int][]byte{}) {
 		t.Fatalf("expected unresolved without manual override")
 	}
 
 	manual := map[int][]byte{1: []byte("manual\n")}
-	if !allResolved(doc, manual) {
+	if !mergeview.AllResolved(sessionFromDoc(t, doc), manual) {
 		t.Fatalf("expected resolved with manual override")
 	}
 }

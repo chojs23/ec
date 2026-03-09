@@ -6,6 +6,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/chojs23/ec/internal/markers"
+	"github.com/chojs23/ec/internal/mergeview"
 )
 
 type lineInfo struct {
@@ -234,6 +235,10 @@ func buildPaneLinesFromDoc(doc markers.Document, side paneSide, highlightConflic
 	return lines, currentStart
 }
 
+func buildPaneLinesFromSession(session *mergeview.Session, side paneSide, highlightConflict int, selectedSide selectionSide) ([]lineInfo, int) {
+	return buildPaneLinesFromDoc(session.Document(), side, highlightConflict, selectedSide)
+}
+
 func buildPaneLinesFromEntries(doc markers.Document, side paneSide, highlightConflict int, selectedSide selectionSide, entries []lineEntry, ranges []conflictRange) ([]lineInfo, int) {
 	var lines []lineInfo
 	currentStart := 0
@@ -338,6 +343,10 @@ func buildPaneLinesFromEntries(doc markers.Document, side paneSide, highlightCon
 	}
 
 	return lines, currentStart
+}
+
+func buildPaneLinesFromEntriesSession(session *mergeview.Session, side paneSide, highlightConflict int, selectedSide selectionSide, entries []lineEntry, ranges []conflictRange) ([]lineInfo, int) {
+	return buildPaneLinesFromEntries(session.Document(), side, highlightConflict, selectedSide, entries, ranges)
 }
 
 func conflictResolutionForIndex(doc markers.Document, conflictIndex int, selectedSide selectionSide) markers.Resolution {
@@ -543,6 +552,10 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 	return lines, currentStart
 }
 
+func buildResultLinesSession(session *mergeview.Session, highlightConflict int, selectedSide selectionSide, manualResolved map[int][]byte) ([]lineInfo, int) {
+	return buildResultLines(session.Document(), highlightConflict, selectedSide, manualResolved)
+}
+
 func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, manualResolved map[int][]byte, highlightConflict int) ([]string, map[int]lineCategory, []resultRange) {
 	var lines []string
 	forced := map[int]lineCategory{}
@@ -601,6 +614,10 @@ func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, m
 	}
 
 	return lines, forced, ranges
+}
+
+func buildResultPreviewLinesSession(session *mergeview.Session, selectedSide selectionSide, manualResolved map[int][]byte, highlightConflict int) ([]string, map[int]lineCategory, []resultRange) {
+	return buildResultPreviewLines(session.Document(), selectedSide, manualResolved, highlightConflict)
 }
 
 func buildResultLinesFromEntries(entries []lineEntry, resultRanges []resultRange, highlightConflict int, forcedCategories map[int]lineCategory) ([]lineInfo, int) {

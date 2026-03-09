@@ -19,6 +19,7 @@ import (
 	"github.com/chojs23/ec/internal/engine"
 	"github.com/chojs23/ec/internal/gitutil"
 	"github.com/chojs23/ec/internal/markers"
+	"github.com/chojs23/ec/internal/mergeview"
 )
 
 const (
@@ -163,6 +164,7 @@ type model struct {
 	ctx              context.Context
 	opts             cli.Options
 	state            *engine.State
+	session          *mergeview.Session
 	doc              markers.Document
 	baseLines        []string
 	oursLines        []string
@@ -193,14 +195,10 @@ type model struct {
 
 type selectionSide int
 
-type conflictLabels struct {
-	OursLabel   string
-	BaseLabel   string
-	TheirsLabel string
-}
+type conflictLabels = mergeview.Labels
 
 type resolverSnapshot struct {
-	doc            markers.Document
+	session        *mergeview.Session
 	manualResolved map[int][]byte
 }
 
@@ -244,6 +242,7 @@ func Run(ctx context.Context, opts cli.Options) error {
 		ctx:              ctx,
 		opts:             opts,
 		state:            state,
+		session:          resolverState.session,
 		doc:              doc,
 		baseLines:        baseLines,
 		oursLines:        oursLines,
@@ -316,7 +315,7 @@ func (m *model) openEditor() tea.Cmd {
 		}
 	}
 
-	resolved, _, err := renderMergedOutput(m.state.Document(), m.manualResolved, m.mergedLabels, m.mergedLabelKnown)
+	resolved, _, err := mergeview.RenderMergedOutput(m.state.Session(), m.manualResolved, m.mergedLabels, m.mergedLabelKnown)
 	if err != nil {
 		return func() tea.Msg {
 			return editorFinishedMsg{err: fmt.Errorf("cannot generate preview for editor: %w", err)}
@@ -373,13 +372,14 @@ func (m *model) reloadFromFile() error {
 
 	return m.applyResolverMutation(func() error {
 		m.state.ReplaceSession(resolverState.session)
+		m.session = m.state.Session()
 		m.doc = m.state.Document()
 		m.manualResolved = resolverState.manualResolved
 		m.mergedLabels = resolverState.mergedLabels
 		m.mergedLabelKnown = resolverState.mergedLabelKnown
 
-		if m.currentConflict >= len(m.doc.Conflicts) {
-			m.currentConflict = len(m.doc.Conflicts) - 1
+		if m.currentConflict >= len(m.session.Conflicts) {
+			m.currentConflict = len(m.session.Conflicts) - 1
 		}
 		if m.currentConflict < 0 {
 			m.currentConflict = 0
@@ -688,7 +688,7 @@ func (m model) View() string {
 	)
 
 	resultStyle := resultUnresolvedPaneStyle
-	if allResolved(m.doc, m.manualResolved) {
+	if mergeview.AllResolved(m.currentSession(), m.manualResolved) {
 		resultStyle = resultResolvedPaneStyle
 	}
 	resultTitle := renderResultPaneTitle(statusText, m.viewportResult.Width, resultTitleStyle, statusStyle)
@@ -1122,7 +1122,7 @@ func (m *model) scrollVertical(delta int) {
 }
 
 func (m *model) writeResolved() error {
-	resolved, allowUnresolved, err := renderMergedOutput(m.state.Document(), m.manualResolved, m.mergedLabels, m.mergedLabelKnown)
+	resolved, allowUnresolved, err := mergeview.RenderMergedOutput(m.state.Session(), m.manualResolved, m.mergedLabels, m.mergedLabelKnown)
 	if err != nil {
 		return fmt.Errorf("cannot write: %w", err)
 	}
@@ -1158,56 +1158,6 @@ func (m *model) writeResolved() error {
 	}
 
 	return nil
-}
-
-func allResolved(doc markers.Document, manualResolved map[int][]byte) bool {
-	for idx, ref := range doc.Conflicts {
-		if _, ok := manualResolved[idx]; ok {
-			continue
-		}
-		seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
-		if !ok {
-			return false
-		}
-		if seg.Resolution == markers.ResolutionUnset {
-			return false
-		}
-	}
-	return true
-}
-
-func renderMergedOutput(doc markers.Document, manualResolved map[int][]byte, mergedLabels []conflictLabels, mergedLabelKnown []bool) ([]byte, bool, error) {
-	var out bytes.Buffer
-	hasUnresolved := false
-	conflictIndex := -1
-
-	for _, seg := range doc.Segments {
-		switch s := seg.(type) {
-		case markers.TextSegment:
-			out.Write(s.Bytes)
-		case markers.ConflictSegment:
-			conflictIndex++
-			if manualBytes, ok := manualResolved[conflictIndex]; ok {
-				out.Write(manualBytes)
-				continue
-			}
-			labels := conflictLabels{
-				OursLabel:   s.OursLabel,
-				BaseLabel:   s.BaseLabel,
-				TheirsLabel: s.TheirsLabel,
-			}
-			if conflictIndex < len(mergedLabels) && conflictIndex < len(mergedLabelKnown) && mergedLabelKnown[conflictIndex] {
-				labels = mergedLabels[conflictIndex]
-			}
-			if markers.AppendConflictSegment(&out, s, labels.OursLabel, labels.BaseLabel, labels.TheirsLabel) {
-				hasUnresolved = true
-			}
-		default:
-			return nil, false, fmt.Errorf("unknown segment type %T", seg)
-		}
-	}
-
-	return out.Bytes(), hasUnresolved, nil
 }
 
 func formatLabel(label string) string {
@@ -1334,126 +1284,6 @@ func isHexRune(r rune) bool {
 
 func isHexByte(b byte) bool {
 	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
-}
-
-func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.Document, map[int][]byte, []conflictLabels, []bool, error) {
-	mergedLines := markers.SplitLinesKeepEOL(mergedBytes)
-	pos := 0
-	manualResolved := map[int][]byte{}
-	alignedLabels := make([]conflictLabels, len(doc.Conflicts))
-	alignedLabelKnown := make([]bool, len(doc.Conflicts))
-
-	conflictIndex := -1
-	pendingTextIndex := -1
-	pendingTextStart := 0
-
-	setPendingText := func(end int) error {
-		if pendingTextIndex < 0 {
-			return nil
-		}
-		if end < pendingTextStart {
-			end = pendingTextStart
-		}
-		if end > len(mergedLines) {
-			end = len(mergedLines)
-		}
-
-		textSeg, ok := doc.Segments[pendingTextIndex].(markers.TextSegment)
-		if !ok {
-			return fmt.Errorf("internal: expected text segment at index %d", pendingTextIndex)
-		}
-		textSeg.Bytes = bytes.Join(mergedLines[pendingTextStart:end], nil)
-		doc.Segments[pendingTextIndex] = textSeg
-		pendingTextIndex = -1
-		return nil
-	}
-
-	for i, seg := range doc.Segments {
-		switch s := seg.(type) {
-		case markers.TextSegment:
-			_ = s
-			pendingTextIndex = i
-			pendingTextStart = pos
-
-		case markers.ConflictSegment:
-			conflictIndex++
-
-			searchPos := pos
-			var pendingTextLines [][]byte
-			if pendingTextIndex >= 0 {
-				textSeg, ok := doc.Segments[pendingTextIndex].(markers.TextSegment)
-				if !ok {
-					return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("internal: expected text segment at index %d", pendingTextIndex)
-				}
-				pendingTextLines = markers.SplitLinesKeepEOL(textSeg.Bytes)
-				if len(pendingTextLines) > 0 {
-					searchPos = alignTextSegmentEnd(mergedLines, pos, pendingTextLines)
-					if searchPos < pos {
-						searchPos = pos
-					}
-					if searchPos > len(mergedLines) {
-						searchPos = len(mergedLines)
-					}
-				}
-			}
-
-			nextTextLines := nextTextSegmentLines(doc.Segments, i+1)
-			nextIdx := -1
-			if len(nextTextLines) > 0 {
-				nextIdx = findSubslice(mergedLines, searchPos, nextTextLines)
-				if nextIdx == -1 {
-					nextIdx = findApproxSubslice(mergedLines, searchPos, nextTextLines)
-				}
-				if nextIdx == searchPos && textLinesBlankOnly(nextTextLines) {
-					if fallbackIdx := findNextConflictBoundary(mergedLines, searchPos, doc.Segments, i+1); fallbackIdx > searchPos {
-						nextIdx = fallbackIdx
-					}
-				}
-			}
-			if nextIdx == -1 {
-				nextIdx = len(mergedLines)
-			}
-
-			conflictPos := pos
-			if textAlignedBeforeConflict(mergedLines, pos, searchPos, pendingTextLines) {
-				conflictPos = searchPos
-			}
-
-			if nextIdx < conflictPos {
-				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("failed to align conflict segment")
-			}
-			spanLines := mergedLines[conflictPos:nextIdx]
-
-			start, end, resolution, manualBytes, labels, labelsKnown := classifyConflictSpan(spanLines, pendingTextLines, s)
-			if start < 0 || end < start || end > len(spanLines) {
-				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("internal: invalid conflict span classification")
-			}
-
-			if err := setPendingText(conflictPos + start); err != nil {
-				return doc, manualResolved, alignedLabels, alignedLabelKnown, err
-			}
-
-			if labelsKnown {
-				alignedLabels[conflictIndex] = labels
-				alignedLabelKnown[conflictIndex] = true
-			}
-
-			if manualBytes != nil {
-				manualResolved[conflictIndex] = manualBytes
-			} else {
-				s.Resolution = resolution
-				doc.Segments[i] = s
-			}
-
-			pos = conflictPos + end
-		}
-	}
-
-	if err := setPendingText(len(mergedLines)); err != nil {
-		return doc, manualResolved, alignedLabels, alignedLabelKnown, err
-	}
-
-	return doc, manualResolved, alignedLabels, alignedLabelKnown, nil
 }
 
 func classifyConflictSpan(spanLines [][]byte, pendingTextLines [][]byte, seg markers.ConflictSegment) (int, int, markers.Resolution, []byte, conflictLabels, bool) {
@@ -2050,18 +1880,19 @@ func manualResolvedEqual(left map[int][]byte, right map[int][]byte) bool {
 }
 
 func resolverSnapshotsEqual(left resolverSnapshot, right resolverSnapshot) bool {
-	return markers.DocumentsEqual(left.doc, right.doc) && manualResolvedEqual(left.manualResolved, right.manualResolved)
+	return mergeview.SessionsEqual(left.session, right.session) && manualResolvedEqual(left.manualResolved, right.manualResolved)
 }
 
 func (m *model) captureResolverSnapshot() resolverSnapshot {
 	return resolverSnapshot{
-		doc:            markers.CloneDocument(m.state.Document()),
+		session:        m.state.Session(),
 		manualResolved: cloneManualResolved(m.manualResolved),
 	}
 }
 
 func (m *model) restoreResolverSnapshot(snapshot resolverSnapshot) {
-	m.state.ReplaceDocument(snapshot.doc)
+	m.state.ReplaceSession(snapshot.session)
+	m.session = m.state.Session()
 	m.doc = m.state.Document()
 	m.manualResolved = cloneManualResolved(snapshot.manualResolved)
 }
@@ -2093,4 +1924,16 @@ func (m model) undoDepth() int {
 
 func (m model) redoDepth() int {
 	return len(m.resolverRedo)
+}
+
+func (m *model) currentSession() *mergeview.Session {
+	if m.session != nil {
+		return m.session
+	}
+	session, err := mergeview.SessionFromDocument(m.doc)
+	if err != nil {
+		return nil
+	}
+	m.session = session
+	return session
 }

@@ -38,17 +38,13 @@ func loadResolverDocumentState(ctx context.Context, opts cli.Options) (resolverD
 		return state, nil
 	}
 
-	updated, manual, labels, known, err := applyMergedResolutions(canonicalDoc, mergedBytes)
+	replayedSession, manual, labels, known, err := mergeview.ReplayMergedResult(canonicalSession, mergedBytes)
 	if err != nil {
 		return resolverDocumentState{}, fmt.Errorf("apply merged resolutions: %w", err)
 	}
-	replayedSession, err := mergeview.SessionFromDocument(updated)
-	if err != nil {
-		return resolverDocumentState{}, err
-	}
 
 	state.session = replayedSession
-	state.doc = updated
+	state.doc = replayedSession.Document()
 	state.manualResolved = manual
 	state.mergedLabels = labels
 	state.mergedLabelKnown = known
