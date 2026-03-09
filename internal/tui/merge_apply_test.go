@@ -293,6 +293,39 @@ func TestApplyMergedResolutionsKeepsDuplicateSuffixOutsideConflict(t *testing.T)
 	}
 }
 
+func TestApplyMergedResolutionsKeepsEditedAndSkippedTextOutsideConflict(t *testing.T) {
+	data := []byte("intro\ngone\nkeep\n<<<<<<< HEAD\nkeep\n=======\ndrop\n>>>>>>> branch\ntail\n")
+	doc, err := markers.Parse(data)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	merged := []byte("intro!\nkeep\ntail\n")
+	updated, manual, labels, known, err := applyMergedResolutions(doc, merged)
+	if err != nil {
+		t.Fatalf("applyMergedResolutions error: %v", err)
+	}
+	if len(manual) != 0 {
+		t.Fatalf("expected no manual resolutions")
+	}
+
+	seg := conflictSegment(t, updated, 0)
+	if seg.Resolution != markers.ResolutionNone {
+		t.Fatalf("resolution = %q, want %q", seg.Resolution, markers.ResolutionNone)
+	}
+
+	rendered, unresolved, err := renderMergedOutput(updated, manual, labels, known)
+	if err != nil {
+		t.Fatalf("renderMergedOutput error: %v", err)
+	}
+	if unresolved {
+		t.Fatalf("expected resolved output")
+	}
+	if string(rendered) != string(merged) {
+		t.Fatalf("rendered = %q, want %q", string(rendered), string(merged))
+	}
+}
+
 func witrLicenseDiff3Fixture() []byte {
 	return []byte("                                 Apache License\n" +
 		"                           Version 2.0, January 2004\n" +

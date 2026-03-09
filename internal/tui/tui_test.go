@@ -268,6 +268,215 @@ func TestReloadFromFilePreservesManualResolution(t *testing.T) {
 	}
 }
 
+func TestLoadResolverDocumentStatePrefersValidMergedMarkers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	baseContent := "intro\nbase line\noutro\n"
+	localContent := "intro\nlocal line\noutro\n"
+	remoteContent := "intro\nremote line\noutro\n"
+	mergedContent := "intro edited\n<<<<<<< ours-label\nlocal from merged\n=======\nremote from merged\n>>>>>>> theirs-label\noutro edited\n"
+
+	if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte(localContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remotePath, []byte(remoteContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mergedPath, []byte(mergedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := loadResolverDocumentState(ctx, cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	})
+	if err != nil {
+		t.Fatalf("loadResolverDocumentState error = %v", err)
+	}
+	if len(state.manualResolved) != 0 {
+		t.Fatalf("manualResolved = %d, want 0", len(state.manualResolved))
+	}
+	if len(state.doc.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1", len(state.doc.Conflicts))
+	}
+
+	intro, ok := state.doc.Segments[0].(markers.TextSegment)
+	if !ok {
+		t.Fatalf("segment 0 = %T, want TextSegment", state.doc.Segments[0])
+	}
+	if string(intro.Bytes) != "intro edited\n" {
+		t.Fatalf("intro text = %q", string(intro.Bytes))
+	}
+
+	seg := conflictSegment(t, state.doc, 0)
+	if string(seg.Ours) != "local from merged\n" {
+		t.Fatalf("seg.Ours = %q", string(seg.Ours))
+	}
+	if string(seg.Base) != "base line\n" {
+		t.Fatalf("seg.Base = %q", string(seg.Base))
+	}
+	if string(seg.Theirs) != "remote from merged\n" {
+		t.Fatalf("seg.Theirs = %q", string(seg.Theirs))
+	}
+	if seg.OursLabel != "ours-label" || seg.TheirsLabel != "theirs-label" {
+		t.Fatalf("labels = %q/%q", seg.OursLabel, seg.TheirsLabel)
+	}
+
+	outro, ok := state.doc.Segments[2].(markers.TextSegment)
+	if !ok {
+		t.Fatalf("segment 2 = %T, want TextSegment", state.doc.Segments[2])
+	}
+	if string(outro.Bytes) != "outro edited\n" {
+		t.Fatalf("outro text = %q", string(outro.Bytes))
+	}
+}
+
+func TestLoadResolverDocumentStateFallsBackForMixedResolvedMergedFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	baseContent := "top\nbase1\nmiddle\nbase2\nbottom\n"
+	localContent := "top\nlocal1\nmiddle\nlocal2\nbottom\n"
+	remoteContent := "top\nremote1\nmiddle\nremote2\nbottom\n"
+	mergedContent := "top\nlocal1\nmiddle edited\n<<<<<<< ours\nlocal2\n=======\nremote2\n>>>>>>> theirs\nbottom edited\n"
+
+	if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte(localContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remotePath, []byte(remoteContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mergedPath, []byte(mergedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := loadResolverDocumentState(ctx, cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	})
+	if err != nil {
+		t.Fatalf("loadResolverDocumentState error = %v", err)
+	}
+	if len(state.doc.Conflicts) != 2 {
+		t.Fatalf("conflicts = %d, want 2", len(state.doc.Conflicts))
+	}
+
+}
+
+func TestReloadFromFilePrefersValidMergedMarkers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	baseContent := "intro\nbase line\noutro\n"
+	localContent := "intro\nlocal line\noutro\n"
+	remoteContent := "intro\nremote line\noutro\n"
+	mergedContent := "intro edited\n<<<<<<< ours-label\nlocal from merged\n=======\nremote from merged\n>>>>>>> theirs-label\noutro edited\n"
+
+	if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte(localContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remotePath, []byte(remoteContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mergedPath, []byte(mergedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	canonicalDoc, err := loadCanonicalDiff3Document(ctx, cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	})
+	if err != nil {
+		t.Fatalf("loadCanonicalDiff3Document error = %v", err)
+	}
+	resolverState, err := engine.NewState(canonicalDoc)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+
+	m := model{
+		ctx:   ctx,
+		opts:  cli.Options{BasePath: basePath, LocalPath: localPath, RemotePath: remotePath, MergedPath: mergedPath},
+		state: resolverState,
+		doc:   canonicalDoc,
+	}
+
+	if err := m.reloadFromFile(); err != nil {
+		t.Fatalf("reloadFromFile error = %v", err)
+	}
+
+	intro, ok := m.doc.Segments[0].(markers.TextSegment)
+	if !ok {
+		t.Fatalf("segment 0 = %T, want TextSegment", m.doc.Segments[0])
+	}
+	if string(intro.Bytes) != "intro edited\n" {
+		t.Fatalf("intro text = %q", string(intro.Bytes))
+	}
+
+	seg := conflictSegment(t, m.doc, 0)
+	if string(seg.Ours) != "local from merged\n" {
+		t.Fatalf("seg.Ours = %q", string(seg.Ours))
+	}
+	if seg.OursLabel != "ours-label" || seg.TheirsLabel != "theirs-label" {
+		t.Fatalf("labels = %q/%q", seg.OursLabel, seg.TheirsLabel)
+	}
+	if len(m.manualResolved) != 0 {
+		t.Fatalf("manualResolved = %d, want 0", len(m.manualResolved))
+	}
+}
+
 func TestReloadFromFileKeepsExistingUndoHistory(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration-style test in short mode")

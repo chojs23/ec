@@ -17,7 +17,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/chojs23/ec/internal/cli"
 	"github.com/chojs23/ec/internal/engine"
-	"github.com/chojs23/ec/internal/gitmerge"
 	"github.com/chojs23/ec/internal/gitutil"
 	"github.com/chojs23/ec/internal/markers"
 )
@@ -215,30 +214,12 @@ func Run(ctx context.Context, opts cli.Options) error {
 	if err := ensureThemeLoaded(); err != nil {
 		return err
 	}
-	// Generate diff3 view
-	diff3Bytes, err := gitmerge.MergeFileDiff3(ctx, opts.LocalPath, opts.BasePath, opts.RemotePath)
+	resolverState, err := loadResolverDocumentState(ctx, opts)
 	if err != nil {
-		return fmt.Errorf("failed to generate diff3 view: %w", err)
+		return err
 	}
 
-	// Parse conflicts
-	doc, err := markers.Parse(diff3Bytes)
-	if err != nil {
-		return fmt.Errorf("failed to parse conflicts: %w", err)
-	}
-
-	manualResolved := map[int][]byte{}
-	var mergedLabels []conflictLabels
-	var mergedLabelKnown []bool
-	if mergedBytes, err := os.ReadFile(opts.MergedPath); err == nil {
-		updated, manual, labels, known, updateErr := applyMergedResolutions(doc, mergedBytes)
-		if updateErr == nil {
-			doc = updated
-			manualResolved = manual
-			mergedLabels = labels
-			mergedLabelKnown = known
-		}
-	}
+	doc := resolverState.doc
 
 	// Validate base completeness unless explicitly allowed to proceed without it.
 	if !opts.AllowMissingBase {
@@ -271,9 +252,9 @@ func Run(ctx context.Context, opts cli.Options) error {
 		useFullDiff:      useFullDiff,
 		currentConflict:  0,
 		selectedSide:     selectedOurs,
-		mergedLabels:     mergedLabels,
-		mergedLabelKnown: mergedLabelKnown,
-		manualResolved:   manualResolved,
+		mergedLabels:     resolverState.mergedLabels,
+		mergedLabelKnown: resolverState.mergedLabelKnown,
+		manualResolved:   resolverState.manualResolved,
 		pendingScroll:    true,
 	}
 
@@ -373,20 +354,12 @@ func (m *model) openEditor() tea.Cmd {
 }
 
 func (m *model) reloadFromFile() error {
-	editedBytes, err := os.ReadFile(m.opts.MergedPath)
+	resolverState, err := loadResolverDocumentState(m.ctx, m.opts)
 	if err != nil {
-		return fmt.Errorf("read edited file: %w", err)
+		return err
 	}
 
-	diff3Bytes, err := gitmerge.MergeFileDiff3(m.ctx, m.opts.LocalPath, m.opts.BasePath, m.opts.RemotePath)
-	if err != nil {
-		return fmt.Errorf("regenerate diff3 view: %w", err)
-	}
-
-	doc, err := markers.Parse(diff3Bytes)
-	if err != nil {
-		return fmt.Errorf("parse diff3 view: %w", err)
-	}
+	doc := resolverState.doc
 
 	if !m.opts.AllowMissingBase {
 		if err := engine.ValidateBaseCompleteness(doc); err != nil {
@@ -398,17 +371,12 @@ func (m *model) reloadFromFile() error {
 		}
 	}
 
-	updated, manual, labels, known, err := applyMergedResolutions(doc, editedBytes)
-	if err != nil {
-		return fmt.Errorf("apply merged resolutions: %w", err)
-	}
-
 	return m.applyResolverMutation(func() error {
-		m.state.ReplaceDocument(updated)
+		m.state.ReplaceDocument(doc)
 		m.doc = m.state.Document()
-		m.manualResolved = manual
-		m.mergedLabels = labels
-		m.mergedLabelKnown = known
+		m.manualResolved = resolverState.manualResolved
+		m.mergedLabels = resolverState.mergedLabels
+		m.mergedLabelKnown = resolverState.mergedLabelKnown
 
 		if m.currentConflict >= len(m.doc.Conflicts) {
 			m.currentConflict = len(m.doc.Conflicts) - 1
@@ -1713,7 +1681,7 @@ func textAlignedBeforeConflict(mergedLines [][]byte, pos int, searchPos int, pen
 	}
 
 	alignedLines := mergedLines[pos:searchPos]
-	if len(alignedLines) == 0 || len(alignedLines) > len(pendingTextLines) {
+	if len(alignedLines) == 0 {
 		return false
 	}
 
@@ -1725,7 +1693,44 @@ func textAlignedBeforeConflict(mergedLines [][]byte, pos int, searchPos int, pen
 		return true
 	}
 
+	if canAlignPreservedText(alignedLines, pendingTextLines) {
+		return true
+	}
+
 	return false
+}
+
+func canAlignPreservedText(alignedLines [][]byte, pendingTextLines [][]byte) bool {
+	alignedIndex := 0
+	pendingIndex := 0
+
+	for alignedIndex < len(alignedLines) && pendingIndex < len(pendingTextLines) {
+		if linesEquivalentForAlignment(alignedLines[alignedIndex], pendingTextLines[pendingIndex]) {
+			alignedIndex++
+			pendingIndex++
+			continue
+		}
+
+		if alignedIndex+1 < len(alignedLines) && linesEquivalentForAlignment(alignedLines[alignedIndex+1], pendingTextLines[pendingIndex]) {
+			alignedIndex++
+			continue
+		}
+
+		if pendingIndex+1 < len(pendingTextLines) && linesEquivalentForAlignment(alignedLines[alignedIndex], pendingTextLines[pendingIndex+1]) {
+			pendingIndex++
+			continue
+		}
+
+		if lineSimilarityPercent(alignedLines[alignedIndex], pendingTextLines[pendingIndex]) >= 70 {
+			alignedIndex++
+			pendingIndex++
+			continue
+		}
+
+		return false
+	}
+
+	return alignedIndex == len(alignedLines)
 }
 
 func alignTextSegmentEnd(mergedLines [][]byte, start int, textLines [][]byte) int {
