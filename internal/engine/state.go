@@ -242,9 +242,14 @@ func (s *State) MergedLabels() ([]ConflictLabels, []bool) {
 
 func (s *State) ImportMerged(merged []byte) error {
 	parsed, err := markers.Parse(merged)
-	if err == nil && len(parsed.Conflicts) == len(s.canonical.Conflicts) && s.canImportParsedDocument(parsed) {
-		s.importParsedDocument(parsed)
-		return nil
+	if err == nil && len(parsed.Conflicts) == len(s.canonical.Conflicts) && len(parsed.Segments) == len(s.canonical.Segments) {
+		if hasUnsafe, detail := s.findUnsafeParsedConflictReorder(parsed); hasUnsafe {
+			return fmt.Errorf("unsafe conflict reorder during import: %s", detail)
+		}
+		if s.canImportParsedDocument(parsed) {
+			s.importParsedDocument(parsed)
+			return nil
+		}
 	}
 
 	oldLines := markers.SplitLinesKeepEOL(s.RenderMerged())
@@ -318,16 +323,33 @@ func (s *State) canImportParsedDocument(doc markers.Document) bool {
 				return false
 			}
 		case markers.ConflictSegment:
-			parsedConflict, ok := doc.Segments[i].(markers.ConflictSegment)
-			if !ok {
-				return false
-			}
-			if isAdjacentConflictSegment(s.canonical.Segments, i) && !sameConflictIdentity(seg, parsedConflict) {
+			if _, ok := doc.Segments[i].(markers.ConflictSegment); !ok {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+func (s *State) findUnsafeParsedConflictReorder(doc markers.Document) (bool, string) {
+	for i, seg := range doc.Segments {
+		parsedConflict, ok := seg.(markers.ConflictSegment)
+		if !ok {
+			continue
+		}
+		if sameConflictIdentity(s.canonical.Segments[i], parsedConflict) {
+			continue
+		}
+		for canonicalIndex, canonicalSeg := range s.canonical.Segments {
+			if canonicalIndex == i {
+				continue
+			}
+			if sameConflictIdentity(canonicalSeg, parsedConflict) {
+				return true, fmt.Sprintf("parsed conflict at segment %d matches canonical segment %d", i, canonicalIndex)
+			}
+		}
+	}
+	return false, ""
 }
 
 func (s *State) importParsedDocument(doc markers.Document) {
@@ -472,20 +494,6 @@ func sameConflictIdentity(left markers.Segment, right markers.ConflictSegment) b
 		return false
 	}
 	return bytes.Equal(canonical.Ours, right.Ours) && bytes.Equal(canonical.Base, right.Base) && bytes.Equal(canonical.Theirs, right.Theirs)
-}
-
-func isAdjacentConflictSegment(segments []markers.Segment, index int) bool {
-	if index > 0 {
-		if _, ok := segments[index-1].(markers.ConflictSegment); ok {
-			return true
-		}
-	}
-	if index+1 < len(segments) {
-		if _, ok := segments[index+1].(markers.ConflictSegment); ok {
-			return true
-		}
-	}
-	return false
 }
 
 func classifyConflictOutput(seg markers.ConflictSegment, output []byte) (markers.Resolution, bool, bool, ConflictLabels, bool) {

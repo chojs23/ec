@@ -442,6 +442,9 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 		if index < 0 || index >= len(boundaryText) {
 			return
 		}
+		if len(boundaryText[index]) == 0 {
+			return
+		}
 		boundaryLines := splitLines(boundaryText[index])
 		lines = append(lines, makeLineInfos(boundaryLines, categoryDefault, false, false, false, false, "")...)
 	}
@@ -567,6 +570,9 @@ func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, m
 	}
 	appendBoundary := func(index int) {
 		if index < 0 || index >= len(boundaryText) {
+			return
+		}
+		if len(boundaryText[index]) == 0 {
 			return
 		}
 		appendLines(splitLines(boundaryText[index]))

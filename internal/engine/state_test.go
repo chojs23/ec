@@ -484,7 +484,7 @@ func TestImportMergedPreservesTextBetweenAdjacentConflictsAfterResolve(t *testin
 	}
 }
 
-func TestCanImportParsedDocumentRejectsReorderedConflicts(t *testing.T) {
+func TestImportMergedRejectsReorderedSeparatedConflicts(t *testing.T) {
 	input := []byte("<<<<<<< left-one\nours1\n=======\ntheirs1\n>>>>>>> right-one\n<<<<<<< left-two\nours2\n=======\ntheirs2\n>>>>>>> right-two\n")
 	doc, err := markers.Parse(input)
 	if err != nil {
@@ -499,13 +499,17 @@ func TestCanImportParsedDocumentRejectsReorderedConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse swapped failed: %v", err)
 	}
-	if state.canImportParsedDocument(parsed) {
-		t.Fatal("canImportParsedDocument should reject reordered conflicts")
+	unsafe, detail := state.findUnsafeParsedConflictReorder(parsed)
+	if !unsafe {
+		t.Fatalf("findUnsafeParsedConflictReorder should detect reorder")
 	}
-	if err := state.ImportMerged(swapped); err != nil {
-		t.Fatalf("ImportMerged failed: %v", err)
+	if detail == "" {
+		t.Fatalf("expected reorder detail")
 	}
-	if got := string(state.RenderMerged()); got != string(swapped) {
-		t.Fatalf("RenderMerged = %q, want %q", got, string(swapped))
+	if err := state.ImportMerged(swapped); err == nil {
+		t.Fatal("ImportMerged should reject reordered separated conflicts")
+	}
+	if got := string(state.RenderMerged()); got != string(input) {
+		t.Fatalf("RenderMerged = %q, want original %q", got, string(input))
 	}
 }

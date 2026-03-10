@@ -44,6 +44,25 @@ func TestBuildResultLinesManualResolved(t *testing.T) {
 	}
 }
 
+func TestBuildResultLinesSkipsEmptyBoundarySlots(t *testing.T) {
+	doc := markers.Document{
+		Segments: []markers.Segment{
+			markers.TextSegment{Bytes: []byte("start\n")},
+			markers.ConflictSegment{Ours: []byte("ours\n"), Theirs: []byte("theirs\n")},
+			markers.TextSegment{Bytes: []byte("end\n")},
+		},
+		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
+	}
+
+	lines, _ := buildResultLines(doc, 0, selectedTheirs, nil, make([][]byte, len(doc.Segments)+1))
+	if len(lines) != 3 {
+		t.Fatalf("lines len = %d, want 3", len(lines))
+	}
+	if lines[0].text != "start" || lines[1].text != "theirs" || lines[2].text != "end" {
+		t.Fatalf("lines = %+v", lines)
+	}
+}
+
 func TestDiffEntriesCategories(t *testing.T) {
 	base := []string{"line1", "line2"}
 	side := []string{"line1", "line2-mod"}
@@ -219,6 +238,35 @@ func TestBuildResultPreviewLinesUsesSelection(t *testing.T) {
 	}
 	if len(lines) != 3 || lines[1] != "theirs" {
 		t.Fatalf("lines = %v, want theirs in conflict output", lines)
+	}
+}
+
+func TestBuildResultPreviewLinesSkipsEmptyBoundarySlots(t *testing.T) {
+	doc := markers.Document{
+		Segments: []markers.Segment{
+			markers.TextSegment{Bytes: []byte("start\n")},
+			markers.ConflictSegment{
+				Ours:   []byte("ours\n"),
+				Base:   []byte("base\n"),
+				Theirs: []byte("theirs\n"),
+			},
+			markers.TextSegment{Bytes: []byte("end\n")},
+		},
+		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
+	}
+
+	lines, forced, ranges := buildResultPreviewLines(doc, selectedTheirs, nil, 0, make([][]byte, len(doc.Segments)+1))
+	if len(forced) != 0 {
+		t.Fatalf("forced len = %d, want 0", len(forced))
+	}
+	if len(ranges) != 1 {
+		t.Fatalf("ranges len = %d, want 1", len(ranges))
+	}
+	if len(lines) != 3 {
+		t.Fatalf("lines len = %d, want 3", len(lines))
+	}
+	if lines[0] != "start" || lines[1] != "theirs" || lines[2] != "end" {
+		t.Fatalf("lines = %v", lines)
 	}
 }
 
