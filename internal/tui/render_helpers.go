@@ -433,12 +433,21 @@ func findSequence(lines []string, seq []string, start int) (int, int, bool) {
 	return -1, -1, false
 }
 
-func buildResultLines(doc markers.Document, highlightConflict int, selectedSide selectionSide, manualResolved map[int][]byte) ([]lineInfo, int) {
+func buildResultLines(doc markers.Document, highlightConflict int, selectedSide selectionSide, manualResolved map[int][]byte, boundaryText [][]byte) ([]lineInfo, int) {
 	var lines []lineInfo
 	conflictIndex := -1
 	currentStart := -1
 
-	for _, seg := range doc.Segments {
+	appendBoundary := func(index int) {
+		if index < 0 || index >= len(boundaryText) {
+			return
+		}
+		boundaryLines := splitLines(boundaryText[index])
+		lines = append(lines, makeLineInfos(boundaryLines, categoryDefault, false, false, false, false, "")...)
+	}
+
+	appendBoundary(0)
+	for segIndex, seg := range doc.Segments {
 		switch s := seg.(type) {
 		case markers.TextSegment:
 			segmentLines := splitLines(s.Bytes)
@@ -535,6 +544,7 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 			}
 
 		}
+		appendBoundary(segIndex + 1)
 	}
 
 	if currentStart == -1 {
@@ -543,7 +553,7 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 	return lines, currentStart
 }
 
-func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, manualResolved map[int][]byte, highlightConflict int) ([]string, map[int]lineCategory, []resultRange) {
+func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, manualResolved map[int][]byte, highlightConflict int, boundaryText [][]byte) ([]string, map[int]lineCategory, []resultRange) {
 	var lines []string
 	forced := map[int]lineCategory{}
 	ranges := make([]resultRange, 0, len(doc.Conflicts))
@@ -555,8 +565,15 @@ func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, m
 		}
 		lines = append(lines, newLines...)
 	}
+	appendBoundary := func(index int) {
+		if index < 0 || index >= len(boundaryText) {
+			return
+		}
+		appendLines(splitLines(boundaryText[index]))
+	}
 
-	for _, seg := range doc.Segments {
+	appendBoundary(0)
+	for segIndex, seg := range doc.Segments {
 		switch s := seg.(type) {
 		case markers.TextSegment:
 			appendLines(splitLines(s.Bytes))
@@ -598,6 +615,7 @@ func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, m
 
 			ranges = append(ranges, resultRange{start: start, end: len(lines), resolved: resolved})
 		}
+		appendBoundary(segIndex + 1)
 	}
 
 	return lines, forced, ranges

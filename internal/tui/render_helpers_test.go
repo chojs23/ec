@@ -25,7 +25,7 @@ func TestBuildResultLinesManualResolved(t *testing.T) {
 		t.Fatalf("Parse error = %v", err)
 	}
 	manual := map[int][]byte{0: []byte("manual\n")}
-	lines, _ := buildResultLines(doc, 0, selectedOurs, manual)
+	lines, _ := buildResultLines(doc, 0, selectedOurs, manual, nil)
 	if len(lines) == 0 {
 		t.Fatalf("expected lines")
 	}
@@ -207,7 +207,7 @@ func TestBuildResultPreviewLinesUsesSelection(t *testing.T) {
 		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
 	}
 
-	lines, forced, ranges := buildResultPreviewLines(doc, selectedTheirs, nil, 0)
+	lines, forced, ranges := buildResultPreviewLines(doc, selectedTheirs, nil, 0, nil)
 	if len(forced) != 0 {
 		t.Fatalf("forced len = %d, want 0", len(forced))
 	}
@@ -243,7 +243,7 @@ func TestBuildResultPreviewLinesManualAndNone(t *testing.T) {
 	}
 
 	manual := map[int][]byte{0: []byte("manual\n")}
-	lines, forced, ranges := buildResultPreviewLines(doc, selectedOurs, manual, 1)
+	lines, forced, ranges := buildResultPreviewLines(doc, selectedOurs, manual, 1, nil)
 	if len(lines) != 5 {
 		t.Fatalf("lines len = %d, want 5", len(lines))
 	}

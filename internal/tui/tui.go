@@ -172,6 +172,7 @@ type model struct {
 	selectedSide     selectionSide
 	mergedLabels     []conflictLabels
 	mergedLabelKnown []bool
+	resultBoundaries [][]byte
 	manualResolved   map[int][]byte
 	resolverUndo     []resolverSnapshot
 	resolverRedo     []resolverSnapshot
@@ -247,6 +248,7 @@ func Run(ctx context.Context, opts cli.Options) error {
 		selectedSide:     selectedOurs,
 		mergedLabels:     resolverState.mergedLabels,
 		mergedLabelKnown: resolverState.mergedLabelKnown,
+		resultBoundaries: resolverState.boundaryText,
 		manualResolved:   resolverState.manualResolved,
 		pendingScroll:    true,
 	}
@@ -1013,11 +1015,11 @@ func (m *model) updateViewports() {
 	var resultLines []lineInfo
 	var resultStart int
 	if useFullDiff {
-		previewLines, forced, resultRanges := buildResultPreviewLines(m.doc, m.selectedSide, m.manualResolved, m.currentConflict)
+		previewLines, forced, resultRanges := buildResultPreviewLines(m.doc, m.selectedSide, m.manualResolved, m.currentConflict, m.resultBoundaries)
 		resultEntries := diffEntries(m.baseLines, previewLines)
 		resultLines, resultStart = buildResultLinesFromEntries(resultEntries, resultRanges, m.currentConflict, forced)
 	} else {
-		resultLines, resultStart = buildResultLines(m.doc, m.currentConflict, m.selectedSide, m.manualResolved)
+		resultLines, resultStart = buildResultLines(m.doc, m.currentConflict, m.selectedSide, m.manualResolved, m.resultBoundaries)
 	}
 	resultContent := renderLines(resultLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles, true)
 	m.viewportResult.SetContent(resultContent)
@@ -1224,6 +1226,7 @@ func renderResultPaneTitle(statusText string, paneWidth int, titleStyle lipgloss
 
 func (m *model) refreshResolverCaches() {
 	m.doc = m.state.Document()
+	m.resultBoundaries = m.state.BoundaryText()
 	m.manualResolved = m.state.ManualResolved()
 	labels, known := m.state.MergedLabels()
 	m.mergedLabels = make([]conflictLabels, len(labels))

@@ -30,10 +30,23 @@ type segmentState struct {
 	conflict *conflictState
 }
 
+type renderSlotKind int
+
+const (
+	slotBoundary renderSlotKind = iota
+	slotSegment
+)
+
+type renderSlot struct {
+	kind  renderSlotKind
+	index int
+}
+
 type State struct {
-	canonical markers.Document
-	segments  []segmentState
-	doc       markers.Document
+	canonical  markers.Document
+	segments   []segmentState
+	boundaries [][]byte
+	doc        markers.Document
 }
 
 func NewState(doc markers.Document) (*State, error) {
@@ -52,7 +65,7 @@ func newStateFromDocument(doc markers.Document) *State {
 			segments = append(segments, segmentState{conflict: &cs})
 		}
 	}
-	state := &State{canonical: canonical, segments: segments}
+	state := &State{canonical: canonical, segments: segments, boundaries: make([][]byte, len(segments)+1)}
 	state.syncDocument()
 	return state
 }
@@ -152,6 +165,10 @@ func (s *State) syncDocument() {
 func (s *State) Clone() *State {
 	clone := &State{canonical: markers.CloneDocument(s.canonical), doc: markers.CloneDocument(s.doc)}
 	clone.segments = make([]segmentState, len(s.segments))
+	clone.boundaries = make([][]byte, len(s.boundaries))
+	for i, boundary := range s.boundaries {
+		clone.boundaries[i] = append([]byte(nil), boundary...)
+	}
 	for i, segment := range s.segments {
 		if segment.conflict == nil {
 			clone.segments[i] = segmentState{text: append([]byte(nil), segment.text...)}
@@ -166,14 +183,26 @@ func (s *State) Clone() *State {
 
 func (s *State) RenderMerged() []byte {
 	var out bytes.Buffer
-	for _, segment := range s.segments {
+	for i, segment := range s.segments {
+		out.Write(s.boundaries[i])
 		if segment.conflict == nil {
 			out.Write(segment.text)
 			continue
 		}
 		out.Write(segment.conflict.output)
 	}
+	if len(s.boundaries) > 0 {
+		out.Write(s.boundaries[len(s.boundaries)-1])
+	}
 	return out.Bytes()
+}
+
+func (s *State) BoundaryText() [][]byte {
+	boundaries := make([][]byte, len(s.boundaries))
+	for i, boundary := range s.boundaries {
+		boundaries[i] = append([]byte(nil), boundary...)
+	}
+	return boundaries
 }
 
 func (s *State) HasUnresolvedConflicts() bool {
@@ -220,49 +249,59 @@ func (s *State) ImportMerged(merged []byte) error {
 
 	oldLines := markers.SplitLinesKeepEOL(s.RenderMerged())
 	newLines := markers.SplitLinesKeepEOL(merged)
-	segmentLines, lineToSegment, boundaryOwner := s.segmentLineOwnership()
-	_ = segmentLines
+	slots := s.renderSlots()
+	lineToSlot, boundarySlotAtCursor := s.slotLineOwnership(slots)
 	ops := diffLines(oldLines, newLines)
-	assigned := make([][][]byte, len(s.segments))
+	assigned := make([][][]byte, len(slots))
 	oldCursor := 0
-	pendingDeletedOwner := -1
+	pendingDeletedSlot := -1
 
 	for _, op := range ops {
 		switch op.kind {
 		case diffInsert:
-			target := boundaryOwner[oldCursor]
-			if pendingDeletedOwner != -1 {
-				target = pendingDeletedOwner
+			target := pendingDeletedSlot
+			if target == -1 {
+				target = slotIndexAtCursor(lineToSlot, boundarySlotAtCursor, oldCursor)
+			}
+			if target == -1 {
+				target = 0
 			}
 			assigned[target] = append(assigned[target], op.newLines...)
-			pendingDeletedOwner = -1
+			pendingDeletedSlot = -1
 		case diffEqual:
 			for _, line := range op.newLines {
-				if oldCursor >= len(lineToSegment) {
+				if oldCursor >= len(lineToSlot) {
 					break
 				}
-				target := lineToSegment[oldCursor]
+				target := lineToSlot[oldCursor]
 				assigned[target] = append(assigned[target], line)
 				oldCursor++
 			}
-			pendingDeletedOwner = -1
+			pendingDeletedSlot = -1
 		case diffDelete:
-			if len(op.oldLines) > 0 && oldCursor < len(lineToSegment) {
-				pendingDeletedOwner = lineToSegment[oldCursor]
+			if len(op.oldLines) > 0 && oldCursor < len(lineToSlot) {
+				pendingDeletedSlot = lineToSlot[oldCursor]
 			}
 			oldCursor += len(op.oldLines)
 		}
 	}
 
-	for i, segment := range s.segments {
+	for i, slot := range slots {
 		updated := joinLines(assigned[i])
-		if segment.conflict == nil {
-			s.segments[i].text = updated
+		switch slot.kind {
+		case slotBoundary:
+			s.boundaries[slot.index] = updated
 			continue
+		case slotSegment:
+			segment := s.segments[slot.index]
+			if segment.conflict == nil {
+				s.segments[slot.index].text = updated
+				continue
+			}
+			conflict := s.segments[slot.index].conflict
+			conflict.output = updated
+			conflict.classifyUpdatedOutput()
 		}
-		conflict := s.segments[i].conflict
-		conflict.output = updated
-		conflict.classifyUpdatedOutput()
 	}
 	s.syncDocument()
 	return nil
@@ -279,7 +318,11 @@ func (s *State) canImportParsedDocument(doc markers.Document) bool {
 				return false
 			}
 		case markers.ConflictSegment:
-			if _, ok := doc.Segments[i].(markers.ConflictSegment); !ok {
+			parsedConflict, ok := doc.Segments[i].(markers.ConflictSegment)
+			if !ok {
+				return false
+			}
+			if isAdjacentConflictSegment(s.canonical.Segments, i) && !sameConflictIdentity(seg, parsedConflict) {
 				return false
 			}
 		}
@@ -288,6 +331,9 @@ func (s *State) canImportParsedDocument(doc markers.Document) bool {
 }
 
 func (s *State) importParsedDocument(doc markers.Document) {
+	for i := range s.boundaries {
+		s.boundaries[i] = nil
+	}
 	for i, parsed := range doc.Segments {
 		switch seg := parsed.(type) {
 		case markers.TextSegment:
@@ -308,46 +354,42 @@ func (s *State) importParsedDocument(doc markers.Document) {
 	s.syncDocument()
 }
 
-func (s *State) segmentLineOwnership() ([]int, []int, []int) {
-	segmentLines := make([]int, len(s.segments))
-	totalLines := 0
-	for i, segment := range s.segments {
-		lines := markers.SplitLinesKeepEOL(s.segmentBytes(segment))
-		segmentLines[i] = len(lines)
-		totalLines += len(lines)
-	}
-
-	lineToSegment := make([]int, totalLines)
-	boundaryOwner := make([]int, totalLines+1)
-	for i := range boundaryOwner {
-		boundaryOwner[i] = -1
-	}
-
-	cursor := 0
-	for i, count := range segmentLines {
-		boundaryOwner[cursor] = i
-		for j := 0; j < count; j++ {
-			lineToSegment[cursor+j] = i
+func (s *State) renderSlots() []renderSlot {
+	slots := make([]renderSlot, 0, len(s.segments)*2+1)
+	for i := range s.boundaries {
+		slots = append(slots, renderSlot{kind: slotBoundary, index: i})
+		if i < len(s.segments) {
+			slots = append(slots, renderSlot{kind: slotSegment, index: i})
 		}
-		cursor += count
 	}
-	if len(s.segments) > 0 && boundaryOwner[totalLines] == -1 {
-		boundaryOwner[totalLines] = len(s.segments) - 1
-	}
-	for i := range boundaryOwner {
-		if boundaryOwner[i] != -1 {
-			continue
-		}
-		if i > 0 {
-			boundaryOwner[i] = lineToSegment[i-1]
-			continue
-		}
-		boundaryOwner[i] = 0
-	}
-	return segmentLines, lineToSegment, boundaryOwner
+	return slots
 }
 
-func (s *State) segmentBytes(segment segmentState) []byte {
+func (s *State) slotLineOwnership(slots []renderSlot) ([]int, map[int]int) {
+	lineToSlot := make([]int, 0)
+	boundarySlotAtCursor := map[int]int{}
+	cursor := 0
+	for slotIndex, slot := range slots {
+		lines := markers.SplitLinesKeepEOL(s.slotBytes(slot))
+		start := cursor
+		for range lines {
+			lineToSlot = append(lineToSlot, slotIndex)
+			cursor++
+		}
+		if slot.kind == slotBoundary {
+			for pos := start; pos <= cursor; pos++ {
+				boundarySlotAtCursor[pos] = slotIndex
+			}
+		}
+	}
+	return lineToSlot, boundarySlotAtCursor
+}
+
+func (s *State) slotBytes(slot renderSlot) []byte {
+	if slot.kind == slotBoundary {
+		return s.boundaries[slot.index]
+	}
+	segment := s.segments[slot.index]
 	if segment.conflict == nil {
 		return segment.text
 	}
@@ -424,6 +466,28 @@ func renderConflictMarkers(seg markers.ConflictSegment, labels ConflictLabels) [
 	return out.Bytes()
 }
 
+func sameConflictIdentity(left markers.Segment, right markers.ConflictSegment) bool {
+	canonical, ok := left.(markers.ConflictSegment)
+	if !ok {
+		return false
+	}
+	return bytes.Equal(canonical.Ours, right.Ours) && bytes.Equal(canonical.Base, right.Base) && bytes.Equal(canonical.Theirs, right.Theirs)
+}
+
+func isAdjacentConflictSegment(segments []markers.Segment, index int) bool {
+	if index > 0 {
+		if _, ok := segments[index-1].(markers.ConflictSegment); ok {
+			return true
+		}
+	}
+	if index+1 < len(segments) {
+		if _, ok := segments[index+1].(markers.ConflictSegment); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func classifyConflictOutput(seg markers.ConflictSegment, output []byte) (markers.Resolution, bool, bool, ConflictLabels, bool) {
 	both := append(append([][]byte{}, markers.SplitLinesKeepEOL(seg.Ours)...), markers.SplitLinesKeepEOL(seg.Theirs)...)
 	bothBytes := joinLines(both)
@@ -459,6 +523,19 @@ func isSupportedResolution(resolution markers.Resolution) bool {
 	default:
 		return false
 	}
+}
+
+func slotIndexAtCursor(lineToSlot []int, boundarySlotAtCursor map[int]int, cursor int) int {
+	if slot, ok := boundarySlotAtCursor[cursor]; ok {
+		return slot
+	}
+	if cursor < len(lineToSlot) {
+		return lineToSlot[cursor]
+	}
+	if cursor > 0 && cursor-1 < len(lineToSlot) {
+		return lineToSlot[cursor-1]
+	}
+	return -1
 }
 
 func joinLines(lines [][]byte) []byte {

@@ -442,6 +442,88 @@ func TestLoadResolverDocumentStateFallsBackForMixedResolvedMergedFile(t *testing
 
 }
 
+func TestInitialLoadRenderUsesModelOwnedMergeState(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	baseContent := "start\nbase\nend\n"
+	localContent := "start\nours\nend\n"
+	remoteContent := "start\ntheirs\nend\n"
+	mergedContent := "start\nmanual\nend\n"
+
+	for path, content := range map[string]string{
+		basePath:   baseContent,
+		localPath:  localContent,
+		remotePath: remoteContent,
+		mergedPath: mergedContent,
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resolverState, err := loadResolverDocumentState(ctx, cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	})
+	if err != nil {
+		t.Fatalf("loadResolverDocumentState error = %v", err)
+	}
+	if resolverState.state == nil {
+		t.Fatal("resolverState.state = nil")
+	}
+	if got := string(resolverState.state.RenderMerged()); got != mergedContent {
+		t.Fatalf("RenderMerged = %q, want %q", got, mergedContent)
+	}
+	manual, ok := resolverState.manualResolved[0]
+	if !ok {
+		t.Fatal("expected manual resolution for conflict 0")
+	}
+	if string(manual) != "manual\n" {
+		t.Fatalf("manual resolution = %q, want %q", string(manual), "manual\\n")
+	}
+
+	m := model{
+		ready:            true,
+		ctx:              ctx,
+		opts:             cli.Options{BasePath: basePath, LocalPath: localPath, RemotePath: remotePath, MergedPath: mergedPath},
+		state:            resolverState.state,
+		doc:              resolverState.doc,
+		manualResolved:   resolverState.manualResolved,
+		mergedLabels:     resolverState.mergedLabels,
+		mergedLabelKnown: resolverState.mergedLabelKnown,
+		currentConflict:  0,
+		selectedSide:     selectedOurs,
+		viewportOurs:     viewport.New(40, 5),
+		viewportResult:   viewport.New(40, 5),
+		viewportTheirs:   viewport.New(40, 5),
+		width:            100,
+		height:           20,
+	}
+	m.updateViewports()
+
+	if !strings.Contains(m.viewportResult.View(), "manual") {
+		t.Fatalf("expected rendered result pane to include manual text, got:\n%s", m.viewportResult.View())
+	}
+	if !strings.Contains(m.View(), "RESULT") {
+		t.Fatalf("expected overall view to include RESULT header, got:\n%s", m.View())
+	}
+}
+
 func TestReloadFromFileKeepsCanonicalConflictStructureWithMergedMarkers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration-style test in short mode")

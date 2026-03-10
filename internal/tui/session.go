@@ -13,6 +13,7 @@ import (
 type resolverDocumentState struct {
 	state            *engine.State
 	doc              markers.Document
+	boundaryText     [][]byte
 	manualResolved   map[int][]byte
 	mergedLabels     []conflictLabels
 	mergedLabelKnown []bool
@@ -54,6 +55,7 @@ func buildResolverDocumentState(state *engine.State) resolverDocumentState {
 	return resolverDocumentState{
 		state:            state,
 		doc:              state.Document(),
+		boundaryText:     state.BoundaryText(),
 		manualResolved:   state.ManualResolved(),
 		mergedLabels:     mergedLabels,
 		mergedLabelKnown: known,
