@@ -1,14 +1,12 @@
 SHELL := /bin/sh
 
 APP := ec
-ALIAS := easy-conflict
 GOFILES := $(shell if command -v fd >/dev/null 2>&1; then fd -e go .; else find . -name '*.go'; fi)
 
 .PHONY: build test fmt fmt-check install install-windows clean
 
 build:
 	go build -o $(APP) ./cmd/ec
-	ln -sf $(APP) $(ALIAS)
 
 test:
 	go test ./...
@@ -31,4 +29,4 @@ install-windows:
 	powershell -ExecutionPolicy Bypass -File scripts/install.ps1
 
 clean:
-	rm -f $(APP) $(ALIAS)
+	rm -f $(APP)

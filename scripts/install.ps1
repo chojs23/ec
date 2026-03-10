@@ -2,7 +2,6 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $App = "ec"
-$Alias = "easy-conflict"
 $Owner = "chojs23"
 $Repo = "ec"
 
@@ -68,13 +67,10 @@ try {
     New-Item -ItemType Directory -Path $BinDir -Force | Out-Null
 
     $appTarget = Join-Path $BinDir "$App.exe"
-    $aliasTarget = Join-Path $BinDir "$Alias.exe"
 
     Copy-Item -Path $AssetPath -Destination $appTarget -Force
-    Copy-Item -Path $appTarget -Destination $aliasTarget -Force
 
     Write-Host "Installed $App to $appTarget"
-    Write-Host "Installed $Alias to $aliasTarget"
 } finally {
     Remove-Item -Path $TempDir -Recurse -Force -ErrorAction SilentlyContinue
 }

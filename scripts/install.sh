@@ -2,7 +2,6 @@
 set -eu
 
 APP="ec"
-ALIAS="easy-conflict"
 OWNER="chojs23"
 REPO="ec"
 PREFIX="${PREFIX:-$HOME/.local}"
@@ -97,7 +96,5 @@ fi
 mkdir -p "$BIN_DIR"
 mv "$asset_path" "$BIN_DIR/$APP"
 chmod 0755 "$BIN_DIR/$APP"
-ln -sf "$BIN_DIR/$APP" "$BIN_DIR/$ALIAS"
 
 printf "Installed %s to %s\n" "$APP" "$BIN_DIR/$APP"
-printf "Installed %s to %s\n" "$ALIAS" "$BIN_DIR/$ALIAS"

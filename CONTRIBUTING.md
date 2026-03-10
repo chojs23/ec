@@ -17,7 +17,7 @@ We appreciate issues and pull requests.
 
 ## Build
 
-Build the binary and create the symlink.
+Build the binary.
 
 ```
 make build
