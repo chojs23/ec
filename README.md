@@ -30,6 +30,20 @@ ec (easy-conflict) is a 3-way terminal native Git merge conflict resolver. Suppo
 brew install chojs23/tap/ec
 ```
 
+### Nix
+
+Run without installing:
+
+```bash
+nix run github:chojs23/ec
+```
+
+Install into your profile:
+
+```bash
+nix profile add github:chojs23/ec
+```
+
 ### Install script
 
 You can run the installer through Make:

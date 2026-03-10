@@ -33,6 +33,19 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+  nix-build:
+    name: Nix Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v21
+
+      - name: Build flake package
+        run: nix build .
+
   coverage:
     name: Test and Coverage
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
