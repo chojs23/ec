@@ -301,6 +301,28 @@ line2
 	}
 }
 
+func TestImportMergedManualConflict(t *testing.T) {
+	input := []byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n")
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	state, err := NewState(doc)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+	if err := state.ImportMerged([]byte("line1\nmanual\nline2\n")); err != nil {
+		t.Fatalf("ImportMerged failed: %v", err)
+	}
+	manual := state.ManualResolved()
+	if got := string(manual[0]); got != "manual\n" {
+		t.Fatalf("manual[0] = %q, want %q", got, "manual\\n")
+	}
+	if got := string(state.RenderMerged()); got != "line1\nmanual\nline2\n" {
+		t.Fatalf("RenderMerged = %q", got)
+	}
+}
+
 func TestPreviewDeterministic(t *testing.T) {
 	input := []byte(`line1
 <<<<<<< HEAD
@@ -406,5 +428,88 @@ line2
 	seg := state.doc.Segments[state.doc.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
 	if seg.Resolution != markers.ResolutionOurs {
 		t.Fatalf("Resolution = %q, want %q after replace", seg.Resolution, markers.ResolutionOurs)
+	}
+}
+
+func TestImportMergedPreservesLeadingBoundaryTextAfterResolve(t *testing.T) {
+	input := []byte("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\ntail\n")
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	state, err := NewState(doc)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+	merged := []byte("header\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\ntail\n")
+	if err := state.ImportMerged(merged); err != nil {
+		t.Fatalf("ImportMerged failed: %v", err)
+	}
+	boundaries := state.BoundaryText()
+	if got := string(boundaries[0]); got != "header\n" {
+		t.Fatalf("BoundaryText()[0] = %q, want %q", got, "header\\n")
+	}
+	if err := state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
+		t.Fatalf("ApplyResolution failed: %v", err)
+	}
+	if got := string(state.RenderMerged()); got != "header\nours\ntail\n" {
+		t.Fatalf("RenderMerged = %q, want %q", got, "header\\nours\\ntail\\n")
+	}
+}
+
+func TestImportMergedPreservesTextBetweenAdjacentConflictsAfterResolve(t *testing.T) {
+	input := []byte("<<<<<<< HEAD\nours1\n=======\ntheirs1\n>>>>>>> one\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> two\n")
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	state, err := NewState(doc)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+	merged := []byte("<<<<<<< HEAD\nours1\n=======\ntheirs1\n>>>>>>> one\nbetween\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> two\n")
+	if err := state.ImportMerged(merged); err != nil {
+		t.Fatalf("ImportMerged failed: %v", err)
+	}
+	boundaries := state.BoundaryText()
+	if got := string(boundaries[1]); got != "between\n" {
+		t.Fatalf("BoundaryText()[1] = %q, want %q", got, "between\\n")
+	}
+	if err := state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
+		t.Fatalf("ApplyResolution failed: %v", err)
+	}
+	expected := "ours1\nbetween\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> two\n"
+	if got := string(state.RenderMerged()); got != expected {
+		t.Fatalf("RenderMerged = %q, want %q", got, expected)
+	}
+}
+
+func TestImportMergedRejectsReorderedSeparatedConflicts(t *testing.T) {
+	input := []byte("<<<<<<< left-one\nours1\n=======\ntheirs1\n>>>>>>> right-one\n<<<<<<< left-two\nours2\n=======\ntheirs2\n>>>>>>> right-two\n")
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	state, err := NewState(doc)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+	swapped := []byte("<<<<<<< left-two\nours2\n=======\ntheirs2\n>>>>>>> right-two\n<<<<<<< left-one\nours1\n=======\ntheirs1\n>>>>>>> right-one\n")
+	parsed, err := markers.Parse(swapped)
+	if err != nil {
+		t.Fatalf("Parse swapped failed: %v", err)
+	}
+	unsafe, detail := state.findUnsafeParsedConflictReorder(parsed)
+	if !unsafe {
+		t.Fatalf("findUnsafeParsedConflictReorder should detect reorder")
+	}
+	if detail == "" {
+		t.Fatalf("expected reorder detail")
+	}
+	if err := state.ImportMerged(swapped); err == nil {
+		t.Fatal("ImportMerged should reject reordered separated conflicts")
+	}
+	if got := string(state.RenderMerged()); got != string(input) {
+		t.Fatalf("RenderMerged = %q, want original %q", got, string(input))
 	}
 }

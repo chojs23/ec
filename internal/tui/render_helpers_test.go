@@ -25,7 +25,7 @@ func TestBuildResultLinesManualResolved(t *testing.T) {
 		t.Fatalf("Parse error = %v", err)
 	}
 	manual := map[int][]byte{0: []byte("manual\n")}
-	lines, _ := buildResultLines(doc, 0, selectedOurs, manual)
+	lines, _ := buildResultLines(doc, 0, selectedOurs, manual, nil)
 	if len(lines) == 0 {
 		t.Fatalf("expected lines")
 	}
@@ -44,28 +44,22 @@ func TestBuildResultLinesManualResolved(t *testing.T) {
 	}
 }
 
-func TestApplyMergedResolutionsManualHunk(t *testing.T) {
-	diff3 := []byte("header\n<<<<<<< HEAD\nours1\n||||||| base\nbase1\n=======\ntheirs1\n>>>>>>> branch\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nfooter\n")
-	doc, err := markers.Parse(diff3)
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
+func TestBuildResultLinesSkipsEmptyBoundarySlots(t *testing.T) {
+	doc := markers.Document{
+		Segments: []markers.Segment{
+			markers.TextSegment{Bytes: []byte("start\n")},
+			markers.ConflictSegment{Ours: []byte("ours\n"), Theirs: []byte("theirs\n")},
+			markers.TextSegment{Bytes: []byte("end\n")},
+		},
+		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
 	}
 
-	merged := []byte("header\nmanual1\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nfooter\n")
-	updated, manual, _, _, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error = %v", err)
+	lines, _ := buildResultLines(doc, 0, selectedTheirs, nil, make([][]byte, len(doc.Segments)+1))
+	if len(lines) != 3 {
+		t.Fatalf("lines len = %d, want 3", len(lines))
 	}
-	if len(manual) != 1 {
-		t.Fatalf("manualResolved count = %d, want 1", len(manual))
-	}
-	if _, ok := manual[0]; !ok {
-		t.Fatalf("manualResolved missing conflict 0")
-	}
-	ref := updated.Conflicts[0]
-	seg := updated.Segments[ref.SegmentIndex].(markers.ConflictSegment)
-	if seg.Resolution != markers.ResolutionUnset {
-		t.Fatalf("conflict 0 resolution = %q, want unset", seg.Resolution)
+	if lines[0].text != "start" || lines[1].text != "theirs" || lines[2].text != "end" {
+		t.Fatalf("lines = %+v", lines)
 	}
 }
 
@@ -232,7 +226,7 @@ func TestBuildResultPreviewLinesUsesSelection(t *testing.T) {
 		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
 	}
 
-	lines, forced, ranges := buildResultPreviewLines(doc, selectedTheirs, nil)
+	lines, forced, ranges := buildResultPreviewLines(doc, selectedTheirs, nil, 0, nil)
 	if len(forced) != 0 {
 		t.Fatalf("forced len = %d, want 0", len(forced))
 	}
@@ -244,6 +238,35 @@ func TestBuildResultPreviewLinesUsesSelection(t *testing.T) {
 	}
 	if len(lines) != 3 || lines[1] != "theirs" {
 		t.Fatalf("lines = %v, want theirs in conflict output", lines)
+	}
+}
+
+func TestBuildResultPreviewLinesSkipsEmptyBoundarySlots(t *testing.T) {
+	doc := markers.Document{
+		Segments: []markers.Segment{
+			markers.TextSegment{Bytes: []byte("start\n")},
+			markers.ConflictSegment{
+				Ours:   []byte("ours\n"),
+				Base:   []byte("base\n"),
+				Theirs: []byte("theirs\n"),
+			},
+			markers.TextSegment{Bytes: []byte("end\n")},
+		},
+		Conflicts: []markers.ConflictRef{{SegmentIndex: 1}},
+	}
+
+	lines, forced, ranges := buildResultPreviewLines(doc, selectedTheirs, nil, 0, make([][]byte, len(doc.Segments)+1))
+	if len(forced) != 0 {
+		t.Fatalf("forced len = %d, want 0", len(forced))
+	}
+	if len(ranges) != 1 {
+		t.Fatalf("ranges len = %d, want 1", len(ranges))
+	}
+	if len(lines) != 3 {
+		t.Fatalf("lines len = %d, want 3", len(lines))
+	}
+	if lines[0] != "start" || lines[1] != "theirs" || lines[2] != "end" {
+		t.Fatalf("lines = %v", lines)
 	}
 }
 
@@ -268,24 +291,36 @@ func TestBuildResultPreviewLinesManualAndNone(t *testing.T) {
 	}
 
 	manual := map[int][]byte{0: []byte("manual\n")}
-	lines, forced, ranges := buildResultPreviewLines(doc, selectedOurs, manual)
+	lines, forced, ranges := buildResultPreviewLines(doc, selectedOurs, manual, 1, nil)
 	if len(lines) != 5 {
 		t.Fatalf("lines len = %d, want 5", len(lines))
 	}
 	if lines[1] != "manual" {
 		t.Fatalf("manual line = %q, want manual", lines[1])
 	}
-	if lines[3] != "[unresolved conflict]" {
-		t.Fatalf("placeholder line = %q, want unresolved conflict", lines[3])
+	if lines[2] != "middle" {
+		t.Fatalf("middle line = %q, want middle", lines[2])
 	}
-	if forced[3] != categoryConflicted {
-		t.Fatalf("forced category = %v, want conflicted", forced[3])
+	if lines[3] != "[resolved: none]" {
+		t.Fatalf("resolved-none marker line = %q, want [resolved: none]", lines[3])
+	}
+	if lines[4] != "end" {
+		t.Fatalf("end line = %q, want end", lines[4])
+	}
+	if forced[3] != categoryResolved {
+		t.Fatalf("forced category = %v, want resolved", forced[3])
 	}
 	if len(ranges) != 2 {
 		t.Fatalf("ranges len = %d, want 2", len(ranges))
 	}
 	if !ranges[0].resolved {
 		t.Fatalf("range 0 resolved = false, want true")
+	}
+	if !ranges[1].resolved {
+		t.Fatalf("range 1 resolved = false, want true")
+	}
+	if ranges[1].end-ranges[1].start != 1 {
+		t.Fatalf("range 1 span len = %d, want 1", ranges[1].end-ranges[1].start)
 	}
 }
 

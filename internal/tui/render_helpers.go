@@ -433,12 +433,24 @@ func findSequence(lines []string, seq []string, start int) (int, int, bool) {
 	return -1, -1, false
 }
 
-func buildResultLines(doc markers.Document, highlightConflict int, selectedSide selectionSide, manualResolved map[int][]byte) ([]lineInfo, int) {
+func buildResultLines(doc markers.Document, highlightConflict int, selectedSide selectionSide, manualResolved map[int][]byte, boundaryText [][]byte) ([]lineInfo, int) {
 	var lines []lineInfo
 	conflictIndex := -1
 	currentStart := -1
 
-	for _, seg := range doc.Segments {
+	appendBoundary := func(index int) {
+		if index < 0 || index >= len(boundaryText) {
+			return
+		}
+		if len(boundaryText[index]) == 0 {
+			return
+		}
+		boundaryLines := splitLines(boundaryText[index])
+		lines = append(lines, makeLineInfos(boundaryLines, categoryDefault, false, false, false, false, "")...)
+	}
+
+	appendBoundary(0)
+	for segIndex, seg := range doc.Segments {
 		switch s := seg.(type) {
 		case markers.TextSegment:
 			segmentLines := splitLines(s.Bytes)
@@ -499,6 +511,16 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 						dim:       true,
 						connector: connectorForResult(false, selected),
 					})
+				} else if effectiveResolution == markers.ResolutionNone && selected {
+					lines = append(lines, lineInfo{
+						text:      "[resolved: none]",
+						category:  categoryResolved,
+						highlight: true,
+						selected:  selected,
+						underline: underline,
+						dim:       false,
+						connector: connectorForResult(true, selected),
+					})
 				}
 				continue
 			}
@@ -525,6 +547,7 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 			}
 
 		}
+		appendBoundary(segIndex + 1)
 	}
 
 	if currentStart == -1 {
@@ -533,7 +556,7 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 	return lines, currentStart
 }
 
-func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, manualResolved map[int][]byte) ([]string, map[int]lineCategory, []resultRange) {
+func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, manualResolved map[int][]byte, highlightConflict int, boundaryText [][]byte) ([]string, map[int]lineCategory, []resultRange) {
 	var lines []string
 	forced := map[int]lineCategory{}
 	ranges := make([]resultRange, 0, len(doc.Conflicts))
@@ -545,8 +568,18 @@ func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, m
 		}
 		lines = append(lines, newLines...)
 	}
+	appendBoundary := func(index int) {
+		if index < 0 || index >= len(boundaryText) {
+			return
+		}
+		if len(boundaryText[index]) == 0 {
+			return
+		}
+		appendLines(splitLines(boundaryText[index]))
+	}
 
-	for _, seg := range doc.Segments {
+	appendBoundary(0)
+	for segIndex, seg := range doc.Segments {
 		switch s := seg.(type) {
 		case markers.TextSegment:
 			appendLines(splitLines(s.Bytes))
@@ -575,13 +608,20 @@ func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, m
 				appendLines(splitLines(s.Ours))
 				appendLines(splitLines(s.Theirs))
 			case markers.ResolutionNone:
-				placeholder := "[unresolved conflict]"
-				forced[len(lines)] = categoryConflicted
-				appendLines([]string{placeholder})
+				if !resolved {
+					placeholder := "[unresolved conflict]"
+					forced[len(lines)] = categoryConflicted
+					appendLines([]string{placeholder})
+				} else if conflictIndex == highlightConflict {
+					placeholder := "[resolved: none]"
+					forced[len(lines)] = categoryResolved
+					appendLines([]string{placeholder})
+				}
 			}
 
 			ranges = append(ranges, resultRange{start: start, end: len(lines), resolved: resolved})
 		}
+		appendBoundary(segIndex + 1)
 	}
 
 	return lines, forced, ranges

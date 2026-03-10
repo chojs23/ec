@@ -18,7 +18,28 @@ import (
 	"github.com/chojs23/ec/internal/engine"
 	"github.com/chojs23/ec/internal/gitmerge"
 	"github.com/chojs23/ec/internal/markers"
+	"github.com/chojs23/ec/internal/mergeview"
 )
+
+func parseSingleConflictDoc(t *testing.T) markers.Document {
+	t.Helper()
+	data := []byte("start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nend\n")
+	doc, err := markers.Parse(data)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	return doc
+}
+
+func conflictSegment(t *testing.T, doc markers.Document, index int) markers.ConflictSegment {
+	t.Helper()
+	ref := doc.Conflicts[index]
+	seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+	if !ok {
+		t.Fatalf("expected conflict segment")
+	}
+	return seg
+}
 
 func TestModelQuitBackToSelector(t *testing.T) {
 	m := model{}
@@ -100,6 +121,9 @@ func TestOpenEditorWithUnresolvedConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
+	if err := state.ImportMerged([]byte("line1\nmanual\nline2\n")); err != nil {
+		t.Fatalf("ImportMerged error = %v", err)
+	}
 
 	editorPath := filepath.Join(tmpDir, "editor.sh")
 	if err := os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -143,6 +167,9 @@ func TestOpenEditorUsesManualResolvedPreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
+	if err := state.ImportMerged([]byte("line1\nmanual\nline2\n")); err != nil {
+		t.Fatalf("ImportMerged error = %v", err)
+	}
 
 	editorPath := filepath.Join(tmpDir, "editor.sh")
 	if err := os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -156,11 +183,10 @@ func TestOpenEditorUsesManualResolvedPreview(t *testing.T) {
 	defer os.Setenv("EDITOR", originalEditor)
 
 	m := model{
-		state:          state,
-		doc:            doc,
-		manualResolved: map[int][]byte{0: []byte("manual\n")},
-		opts:           cliOptionsWithMergedPath(mergedPath),
+		state: state,
+		opts:  cliOptionsWithMergedPath(mergedPath),
 	}
+	m.refreshResolverCaches()
 
 	msg := m.openEditor()()
 	if !strings.Contains(fmt.Sprintf("%T", msg), "execMsg") {
@@ -265,6 +291,321 @@ func TestReloadFromFilePreservesManualResolution(t *testing.T) {
 	}
 	if string(manual) != "manual\n" {
 		t.Fatalf("manual resolution after redo = %q", string(manual))
+	}
+}
+
+func TestLoadResolverDocumentStateKeepsCanonicalConflictStructureWithMergedMarkers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	baseContent := "intro\nbase line\noutro\n"
+	localContent := "intro\nlocal line\noutro\n"
+	remoteContent := "intro\nremote line\noutro\n"
+	mergedContent := "intro edited\n<<<<<<< ours-label\nlocal from merged\n=======\nremote from merged\n>>>>>>> theirs-label\noutro edited\n"
+
+	if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte(localContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remotePath, []byte(remoteContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mergedPath, []byte(mergedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := loadResolverDocumentState(ctx, cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	})
+	if err != nil {
+		t.Fatalf("loadResolverDocumentState error = %v", err)
+	}
+	if len(state.manualResolved) != 0 {
+		t.Fatalf("manualResolved = %d, want 0", len(state.manualResolved))
+	}
+	if len(state.doc.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1", len(state.doc.Conflicts))
+	}
+
+	intro, ok := state.doc.Segments[0].(markers.TextSegment)
+	if !ok {
+		t.Fatalf("segment 0 = %T, want TextSegment", state.doc.Segments[0])
+	}
+	if string(intro.Bytes) != "intro edited\n" {
+		t.Fatalf("intro text = %q", string(intro.Bytes))
+	}
+
+	seg := conflictSegment(t, state.doc, 0)
+	if string(seg.Ours) != "local line\n" {
+		t.Fatalf("seg.Ours = %q", string(seg.Ours))
+	}
+	if string(seg.Base) != "base line\n" {
+		t.Fatalf("seg.Base = %q", string(seg.Base))
+	}
+	if string(seg.Theirs) != "remote line\n" {
+		t.Fatalf("seg.Theirs = %q", string(seg.Theirs))
+	}
+	if !state.mergedLabelKnown[0] {
+		t.Fatalf("mergedLabelKnown[0] = false, want true")
+	}
+	if state.mergedLabels[0].OursLabel != "ours-label" || state.mergedLabels[0].TheirsLabel != "theirs-label" {
+		t.Fatalf("mergedLabels[0] = %+v", state.mergedLabels[0])
+	}
+
+	outro, ok := state.doc.Segments[2].(markers.TextSegment)
+	if !ok {
+		t.Fatalf("segment 2 = %T, want TextSegment", state.doc.Segments[2])
+	}
+	if string(outro.Bytes) != "outro edited\n" {
+		t.Fatalf("outro text = %q", string(outro.Bytes))
+	}
+}
+
+func TestLoadResolverDocumentStateFallsBackForMixedResolvedMergedFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	baseContent := "top\nbase1\nmiddle\nbase2\nbottom\n"
+	localContent := "top\nlocal1\nmiddle\nlocal2\nbottom\n"
+	remoteContent := "top\nremote1\nmiddle\nremote2\nbottom\n"
+	mergedContent := "top\nlocal1\nmiddle\n<<<<<<< ours\nlocal2\n=======\nremote2\n>>>>>>> theirs\nbottom\n"
+
+	if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte(localContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remotePath, []byte(remoteContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mergedPath, []byte(mergedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := loadResolverDocumentState(ctx, cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	})
+	if err != nil {
+		t.Fatalf("loadResolverDocumentState error = %v", err)
+	}
+	if len(state.doc.Conflicts) != 2 {
+		t.Fatalf("conflicts = %d, want 2", len(state.doc.Conflicts))
+	}
+	first := conflictSegment(t, state.doc, 0)
+	if first.Resolution != markers.ResolutionOurs {
+		t.Fatalf("first resolution = %q, want %q", first.Resolution, markers.ResolutionOurs)
+	}
+	middleText, ok := state.doc.Segments[2].(markers.TextSegment)
+	if !ok {
+		t.Fatalf("segment 2 = %T, want TextSegment", state.doc.Segments[2])
+	}
+	if string(middleText.Bytes) != "middle\n" {
+		t.Fatalf("middle text = %q", string(middleText.Bytes))
+	}
+	second := conflictSegment(t, state.doc, 1)
+	if second.Resolution != markers.ResolutionUnset {
+		t.Fatalf("second resolution = %q, want unset", second.Resolution)
+	}
+
+}
+
+func TestInitialLoadRenderUsesModelOwnedMergeState(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	baseContent := "start\nbase\nend\n"
+	localContent := "start\nours\nend\n"
+	remoteContent := "start\ntheirs\nend\n"
+	mergedContent := "start\nmanual\nend\n"
+
+	for path, content := range map[string]string{
+		basePath:   baseContent,
+		localPath:  localContent,
+		remotePath: remoteContent,
+		mergedPath: mergedContent,
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	resolverState, err := loadResolverDocumentState(ctx, cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	})
+	if err != nil {
+		t.Fatalf("loadResolverDocumentState error = %v", err)
+	}
+	if resolverState.state == nil {
+		t.Fatal("resolverState.state = nil")
+	}
+	if got := string(resolverState.state.RenderMerged()); got != mergedContent {
+		t.Fatalf("RenderMerged = %q, want %q", got, mergedContent)
+	}
+	manual, ok := resolverState.manualResolved[0]
+	if !ok {
+		t.Fatal("expected manual resolution for conflict 0")
+	}
+	if string(manual) != "manual\n" {
+		t.Fatalf("manual resolution = %q, want %q", string(manual), "manual\\n")
+	}
+
+	m := model{
+		ready:            true,
+		ctx:              ctx,
+		opts:             cli.Options{BasePath: basePath, LocalPath: localPath, RemotePath: remotePath, MergedPath: mergedPath},
+		state:            resolverState.state,
+		doc:              resolverState.doc,
+		manualResolved:   resolverState.manualResolved,
+		mergedLabels:     resolverState.mergedLabels,
+		mergedLabelKnown: resolverState.mergedLabelKnown,
+		currentConflict:  0,
+		selectedSide:     selectedOurs,
+		viewportOurs:     viewport.New(40, 5),
+		viewportResult:   viewport.New(40, 5),
+		viewportTheirs:   viewport.New(40, 5),
+		width:            100,
+		height:           20,
+	}
+	m.updateViewports()
+
+	if !strings.Contains(m.viewportResult.View(), "manual") {
+		t.Fatalf("expected rendered result pane to include manual text, got:\n%s", m.viewportResult.View())
+	}
+	if !strings.Contains(m.View(), "RESULT") {
+		t.Fatalf("expected overall view to include RESULT header, got:\n%s", m.View())
+	}
+}
+
+func TestReloadFromFileKeepsCanonicalConflictStructureWithMergedMarkers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	baseContent := "intro\nbase line\noutro\n"
+	localContent := "intro\nlocal line\noutro\n"
+	remoteContent := "intro\nremote line\noutro\n"
+	mergedContent := "intro edited\n<<<<<<< ours-label\nlocal from merged\n=======\nremote from merged\n>>>>>>> theirs-label\noutro edited\n"
+
+	if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte(localContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remotePath, []byte(remoteContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mergedPath, []byte(mergedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	canonicalDoc, err := mergeview.LoadCanonicalDocument(ctx, cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	})
+	if err != nil {
+		t.Fatalf("LoadCanonicalDocument error = %v", err)
+	}
+	resolverState, err := engine.NewState(canonicalDoc)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+
+	m := model{
+		ctx:   ctx,
+		opts:  cli.Options{BasePath: basePath, LocalPath: localPath, RemotePath: remotePath, MergedPath: mergedPath},
+		state: resolverState,
+		doc:   canonicalDoc,
+	}
+
+	if err := m.reloadFromFile(); err != nil {
+		t.Fatalf("reloadFromFile error = %v", err)
+	}
+
+	intro, ok := m.doc.Segments[0].(markers.TextSegment)
+	if !ok {
+		t.Fatalf("segment 0 = %T, want TextSegment", m.doc.Segments[0])
+	}
+	if string(intro.Bytes) != "intro edited\n" {
+		t.Fatalf("intro text = %q", string(intro.Bytes))
+	}
+
+	seg := conflictSegment(t, m.doc, 0)
+	if string(seg.Ours) != "local line\n" {
+		t.Fatalf("seg.Ours = %q", string(seg.Ours))
+	}
+	if string(seg.Theirs) != "remote line\n" {
+		t.Fatalf("seg.Theirs = %q", string(seg.Theirs))
+	}
+	if !m.mergedLabelKnown[0] {
+		t.Fatalf("mergedLabelKnown[0] = false, want true")
+	}
+	if m.mergedLabels[0].OursLabel != "ours-label" || m.mergedLabels[0].TheirsLabel != "theirs-label" {
+		t.Fatalf("mergedLabels[0] = %+v", m.mergedLabels[0])
+	}
+	if len(m.manualResolved) != 0 {
+		t.Fatalf("manualResolved = %d, want 0", len(m.manualResolved))
 	}
 }
 
@@ -648,35 +989,6 @@ func TestModelViewNoLabelsWithoutMergedLabels(t *testing.T) {
 	}
 	if strings.Contains(view, "THEIRS (") {
 		t.Fatalf("expected plain THEIRS without label when mergedLabels is nil, got:\n%s", view)
-	}
-}
-
-func TestLabelsFromConflictSpan(t *testing.T) {
-	lines := markers.SplitLinesKeepEOL([]byte("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature/add-auth\n"))
-	labels := labelsFromConflictSpan(lines)
-	if labels.OursLabel != "HEAD" {
-		t.Fatalf("OursLabel = %q, want HEAD", labels.OursLabel)
-	}
-	if labels.TheirsLabel != "feature/add-auth" {
-		t.Fatalf("TheirsLabel = %q, want feature/add-auth", labels.TheirsLabel)
-	}
-}
-
-func TestLabelsFromConflictSpanWithHash(t *testing.T) {
-	lines := markers.SplitLinesKeepEOL([]byte("<<<<<<< HEAD\nours\n||||||| abc1234\nbase\n=======\ntheirs\n>>>>>>> abc1234def5678901234 (main change)\n"))
-	labels := labelsFromConflictSpan(lines)
-	if labels.BaseLabel != "abc1234" {
-		t.Fatalf("BaseLabel = %q, want abc1234", labels.BaseLabel)
-	}
-	if labels.TheirsLabel != "abc1234def5678901234 (main change)" {
-		t.Fatalf("TheirsLabel = %q, want raw label", labels.TheirsLabel)
-	}
-}
-
-func TestLabelsFromConflictSpanInvalid(t *testing.T) {
-	labels := labelsFromConflictSpan(markers.SplitLinesKeepEOL([]byte("no conflicts here")))
-	if labels != (conflictLabels{}) {
-		t.Fatalf("expected zero labels for no-conflict input, got %+v", labels)
 	}
 }
 
@@ -1569,16 +1881,15 @@ func TestWriteResolvedPreservesMergedLabelsForUnresolved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
+	if err := state.ImportMerged([]byte("<<<<<<< ec\nours\n=======\ntheirs\n>>>>>>> main\n")); err != nil {
+		t.Fatalf("ImportMerged error = %v", err)
+	}
 
 	m := model{
 		state: state,
 		opts:  cli.Options{MergedPath: mergedPath},
-		mergedLabels: []conflictLabels{{
-			OursLabel:   "ec",
-			TheirsLabel: "main",
-		}},
-		mergedLabelKnown: []bool{true},
 	}
+	m.refreshResolverCaches()
 
 	if err := m.writeResolved(); err != nil {
 		t.Fatalf("writeResolved error = %v", err)

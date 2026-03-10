@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -17,7 +16,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/chojs23/ec/internal/cli"
 	"github.com/chojs23/ec/internal/engine"
-	"github.com/chojs23/ec/internal/gitmerge"
 	"github.com/chojs23/ec/internal/gitutil"
 	"github.com/chojs23/ec/internal/markers"
 )
@@ -174,6 +172,7 @@ type model struct {
 	selectedSide     selectionSide
 	mergedLabels     []conflictLabels
 	mergedLabelKnown []bool
+	resultBoundaries [][]byte
 	manualResolved   map[int][]byte
 	resolverUndo     []resolverSnapshot
 	resolverRedo     []resolverSnapshot
@@ -201,8 +200,7 @@ type conflictLabels struct {
 }
 
 type resolverSnapshot struct {
-	doc            markers.Document
-	manualResolved map[int][]byte
+	state *engine.State
 }
 
 const (
@@ -215,30 +213,12 @@ func Run(ctx context.Context, opts cli.Options) error {
 	if err := ensureThemeLoaded(); err != nil {
 		return err
 	}
-	// Generate diff3 view
-	diff3Bytes, err := gitmerge.MergeFileDiff3(ctx, opts.LocalPath, opts.BasePath, opts.RemotePath)
+	resolverState, err := loadResolverDocumentState(ctx, opts)
 	if err != nil {
-		return fmt.Errorf("failed to generate diff3 view: %w", err)
+		return err
 	}
 
-	// Parse conflicts
-	doc, err := markers.Parse(diff3Bytes)
-	if err != nil {
-		return fmt.Errorf("failed to parse conflicts: %w", err)
-	}
-
-	manualResolved := map[int][]byte{}
-	var mergedLabels []conflictLabels
-	var mergedLabelKnown []bool
-	if mergedBytes, err := os.ReadFile(opts.MergedPath); err == nil {
-		updated, manual, labels, known, updateErr := applyMergedResolutions(doc, mergedBytes)
-		if updateErr == nil {
-			doc = updated
-			manualResolved = manual
-			mergedLabels = labels
-			mergedLabelKnown = known
-		}
-	}
+	doc := resolverState.doc
 
 	// Validate base completeness unless explicitly allowed to proceed without it.
 	if !opts.AllowMissingBase {
@@ -252,17 +232,12 @@ func Run(ctx context.Context, opts cli.Options) error {
 	}
 
 	// Initialize state
-	state, err := engine.NewState(doc)
-	if err != nil {
-		return fmt.Errorf("failed to create state: %w", err)
-	}
-
 	baseLines, oursLines, theirsLines, ranges, useFullDiff := prepareFullDiff(doc, opts)
 
 	m := model{
 		ctx:              ctx,
 		opts:             opts,
-		state:            state,
+		state:            resolverState.state,
 		doc:              doc,
 		baseLines:        baseLines,
 		oursLines:        oursLines,
@@ -271,9 +246,10 @@ func Run(ctx context.Context, opts cli.Options) error {
 		useFullDiff:      useFullDiff,
 		currentConflict:  0,
 		selectedSide:     selectedOurs,
-		mergedLabels:     mergedLabels,
-		mergedLabelKnown: mergedLabelKnown,
-		manualResolved:   manualResolved,
+		mergedLabels:     resolverState.mergedLabels,
+		mergedLabelKnown: resolverState.mergedLabelKnown,
+		resultBoundaries: resolverState.boundaryText,
+		manualResolved:   resolverState.manualResolved,
 		pendingScroll:    true,
 	}
 
@@ -335,12 +311,7 @@ func (m *model) openEditor() tea.Cmd {
 		}
 	}
 
-	resolved, _, err := renderMergedOutput(m.state.Document(), m.manualResolved, m.mergedLabels, m.mergedLabelKnown)
-	if err != nil {
-		return func() tea.Msg {
-			return editorFinishedMsg{err: fmt.Errorf("cannot generate preview for editor: %w", err)}
-		}
-	}
+	resolved := m.state.RenderMerged()
 
 	if m.opts.Backup {
 		bak := m.opts.MergedPath + ".ec.bak"
@@ -373,20 +344,16 @@ func (m *model) openEditor() tea.Cmd {
 }
 
 func (m *model) reloadFromFile() error {
-	editedBytes, err := os.ReadFile(m.opts.MergedPath)
+	mergedBytes, err := os.ReadFile(m.opts.MergedPath)
 	if err != nil {
-		return fmt.Errorf("read edited file: %w", err)
+		return err
+	}
+	nextState := m.state.Clone()
+	if err := nextState.ImportMerged(mergedBytes); err != nil {
+		return err
 	}
 
-	diff3Bytes, err := gitmerge.MergeFileDiff3(m.ctx, m.opts.LocalPath, m.opts.BasePath, m.opts.RemotePath)
-	if err != nil {
-		return fmt.Errorf("regenerate diff3 view: %w", err)
-	}
-
-	doc, err := markers.Parse(diff3Bytes)
-	if err != nil {
-		return fmt.Errorf("parse diff3 view: %w", err)
-	}
+	doc := nextState.Document()
 
 	if !m.opts.AllowMissingBase {
 		if err := engine.ValidateBaseCompleteness(doc); err != nil {
@@ -398,17 +365,9 @@ func (m *model) reloadFromFile() error {
 		}
 	}
 
-	updated, manual, labels, known, err := applyMergedResolutions(doc, editedBytes)
-	if err != nil {
-		return fmt.Errorf("apply merged resolutions: %w", err)
-	}
-
 	return m.applyResolverMutation(func() error {
-		m.state.ReplaceDocument(updated)
-		m.doc = m.state.Document()
-		m.manualResolved = manual
-		m.mergedLabels = labels
-		m.mergedLabelKnown = known
+		m.state = nextState
+		m.refreshResolverCaches()
 
 		if m.currentConflict >= len(m.doc.Conflicts) {
 			m.currentConflict = len(m.doc.Conflicts) - 1
@@ -490,10 +449,16 @@ func isTrulyMissingBaseStage(ctx context.Context, mergedPath string) (bool, bool
 	if err != nil {
 		return false, false
 	}
+	if resolvedMergedPath, err := filepath.EvalSymlinks(absMergedPath); err == nil {
+		absMergedPath = resolvedMergedPath
+	}
 
 	repoRoot, err := gitutil.RepoRoot(ctx, filepath.Dir(absMergedPath))
 	if err != nil {
 		return false, false
+	}
+	if resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot); err == nil {
+		repoRoot = resolvedRepoRoot
 	}
 
 	relPath, err := filepath.Rel(repoRoot, absMergedPath)
@@ -789,8 +754,7 @@ func (m *model) applySelectedSide() error {
 		if err := m.state.ApplyResolution(m.currentConflict, resolution); err != nil {
 			return err
 		}
-		delete(m.manualResolved, m.currentConflict)
-		m.doc = m.state.Document()
+		m.refreshResolverCaches()
 		return nil
 	})
 }
@@ -800,8 +764,7 @@ func (m *model) applyResolution(resolution markers.Resolution) error {
 		if err := m.state.ApplyResolution(m.currentConflict, resolution); err != nil {
 			return err
 		}
-		delete(m.manualResolved, m.currentConflict)
-		m.doc = m.state.Document()
+		m.refreshResolverCaches()
 		return nil
 	})
 }
@@ -811,8 +774,7 @@ func (m *model) applyAll(resolution markers.Resolution) error {
 		if err := m.state.ApplyAll(resolution); err != nil {
 			return err
 		}
-		m.manualResolved = map[int][]byte{}
-		m.doc = m.state.Document()
+		m.refreshResolverCaches()
 		return nil
 	})
 }
@@ -974,7 +936,7 @@ func (m *model) handleWrite() (tea.Cmd, error) {
 	if err := m.writeResolved(); err != nil {
 		return nil, fmt.Errorf("failed to write resolved: %w", err)
 	}
-	m.doc = m.state.Document()
+	m.refreshResolverCaches()
 	m.updateViewports()
 	return m.showToast("Saved", 2), nil
 }
@@ -1053,11 +1015,11 @@ func (m *model) updateViewports() {
 	var resultLines []lineInfo
 	var resultStart int
 	if useFullDiff {
-		previewLines, forced, resultRanges := buildResultPreviewLines(m.doc, m.selectedSide, m.manualResolved)
+		previewLines, forced, resultRanges := buildResultPreviewLines(m.doc, m.selectedSide, m.manualResolved, m.currentConflict, m.resultBoundaries)
 		resultEntries := diffEntries(m.baseLines, previewLines)
 		resultLines, resultStart = buildResultLinesFromEntries(resultEntries, resultRanges, m.currentConflict, forced)
 	} else {
-		resultLines, resultStart = buildResultLines(m.doc, m.currentConflict, m.selectedSide, m.manualResolved)
+		resultLines, resultStart = buildResultLines(m.doc, m.currentConflict, m.selectedSide, m.manualResolved, m.resultBoundaries)
 	}
 	resultContent := renderLines(resultLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles, true)
 	m.viewportResult.SetContent(resultContent)
@@ -1154,10 +1116,8 @@ func (m *model) scrollVertical(delta int) {
 }
 
 func (m *model) writeResolved() error {
-	resolved, allowUnresolved, err := renderMergedOutput(m.state.Document(), m.manualResolved, m.mergedLabels, m.mergedLabelKnown)
-	if err != nil {
-		return fmt.Errorf("cannot write: %w", err)
-	}
+	resolved := m.state.RenderMerged()
+	allowUnresolved := m.state.HasUnresolvedConflicts()
 
 	// Read original merged file for backup
 	mergedBytes, err := os.ReadFile(m.opts.MergedPath)
@@ -1206,40 +1166,6 @@ func allResolved(doc markers.Document, manualResolved map[int][]byte) bool {
 		}
 	}
 	return true
-}
-
-func renderMergedOutput(doc markers.Document, manualResolved map[int][]byte, mergedLabels []conflictLabels, mergedLabelKnown []bool) ([]byte, bool, error) {
-	var out bytes.Buffer
-	hasUnresolved := false
-	conflictIndex := -1
-
-	for _, seg := range doc.Segments {
-		switch s := seg.(type) {
-		case markers.TextSegment:
-			out.Write(s.Bytes)
-		case markers.ConflictSegment:
-			conflictIndex++
-			if manualBytes, ok := manualResolved[conflictIndex]; ok {
-				out.Write(manualBytes)
-				continue
-			}
-			labels := conflictLabels{
-				OursLabel:   s.OursLabel,
-				BaseLabel:   s.BaseLabel,
-				TheirsLabel: s.TheirsLabel,
-			}
-			if conflictIndex < len(mergedLabels) && conflictIndex < len(mergedLabelKnown) && mergedLabelKnown[conflictIndex] {
-				labels = mergedLabels[conflictIndex]
-			}
-			if markers.AppendConflictSegment(&out, s, labels.OursLabel, labels.BaseLabel, labels.TheirsLabel) {
-				hasUnresolved = true
-			}
-		default:
-			return nil, false, fmt.Errorf("unknown segment type %T", seg)
-		}
-	}
-
-	return out.Bytes(), hasUnresolved, nil
 }
 
 func formatLabel(label string) string {
@@ -1296,6 +1222,22 @@ func renderResultPaneTitle(statusText string, paneWidth int, titleStyle lipgloss
 	}
 
 	return titleStyle.Render(prefix + statusStyle.Render(trimmedStatus))
+}
+
+func (m *model) refreshResolverCaches() {
+	m.doc = m.state.Document()
+	m.resultBoundaries = m.state.BoundaryText()
+	m.manualResolved = m.state.ManualResolved()
+	labels, known := m.state.MergedLabels()
+	m.mergedLabels = make([]conflictLabels, len(labels))
+	for i, label := range labels {
+		m.mergedLabels[i] = conflictLabels{
+			OursLabel:   label.OursLabel,
+			BaseLabel:   label.BaseLabel,
+			TheirsLabel: label.TheirsLabel,
+		}
+	}
+	m.mergedLabelKnown = known
 }
 
 func truncateDisplayWidth(value string, maxWidth int) string {
@@ -1368,187 +1310,32 @@ func isHexByte(b byte) bool {
 	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
 }
 
-func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.Document, map[int][]byte, []conflictLabels, []bool, error) {
-	mergedLines := markers.SplitLinesKeepEOL(mergedBytes)
-	pos := 0
-	manualResolved := map[int][]byte{}
-	alignedLabels := make([]conflictLabels, len(doc.Conflicts))
-	alignedLabelKnown := make([]bool, len(doc.Conflicts))
-
-	conflictIndex := -1
-	for i, seg := range doc.Segments {
-		switch s := seg.(type) {
-		case markers.TextSegment:
-			textLines := markers.SplitLinesKeepEOL(s.Bytes)
-			if len(textLines) == 0 {
-				continue
-			}
-			idx := findSubslice(mergedLines, pos, textLines)
-			if idx == -1 {
-				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("failed to align text segment")
-			}
-			pos = idx + len(textLines)
-
-		case markers.ConflictSegment:
-			conflictIndex++
-			nextTextLines := nextTextSegmentLines(doc.Segments, i+1)
-			nextIdx := -1
-			if len(nextTextLines) > 0 {
-				nextIdx = findSubslice(mergedLines, pos, nextTextLines)
-			}
-			if nextIdx == -1 {
-				nextIdx = len(mergedLines)
-			}
-			if nextIdx < pos {
-				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("failed to align conflict segment")
-			}
-			spanLines := mergedLines[pos:nextIdx]
-			if containsConflictMarkers(spanLines) {
-				alignedLabels[conflictIndex] = labelsFromConflictSpan(spanLines)
-				alignedLabelKnown[conflictIndex] = true
-				pos = nextIdx
-				continue
-			}
-			resolution, matched := matchResolution(spanLines, s)
-			if matched {
-				s.Resolution = resolution
-				doc.Segments[i] = s
-				pos = nextIdx
-				continue
-			}
-			var manualBytes []byte
-			if len(spanLines) > 0 {
-				manualBytes = bytes.Join(spanLines, nil)
-			}
-			manualResolved[conflictIndex] = manualBytes
-			pos = nextIdx
-		}
+func resolverSnapshotsEqual(left resolverSnapshot, right resolverSnapshot) bool {
+	if left.state == nil || right.state == nil {
+		return left.state == nil && right.state == nil
 	}
-
-	return doc, manualResolved, alignedLabels, alignedLabelKnown, nil
-}
-
-func labelsFromConflictSpan(lines [][]byte) conflictLabels {
-	var labels conflictLabels
-	for _, line := range lines {
-		text := strings.TrimRight(string(line), "\r\n")
-		switch {
-		case strings.HasPrefix(text, "<<<<<<<"):
-			labels.OursLabel = strings.TrimSpace(strings.TrimPrefix(text, "<<<<<<<"))
-		case strings.HasPrefix(text, "|||||||"):
-			labels.BaseLabel = strings.TrimSpace(strings.TrimPrefix(text, "|||||||"))
-		case strings.HasPrefix(text, ">>>>>>>"):
-			labels.TheirsLabel = strings.TrimSpace(strings.TrimPrefix(text, ">>>>>>>"))
-		}
-	}
-	return labels
-}
-
-func nextTextSegmentLines(segments []markers.Segment, start int) [][]byte {
-	for i := start; i < len(segments); i++ {
-		if text, ok := segments[i].(markers.TextSegment); ok {
-			lines := markers.SplitLinesKeepEOL(text.Bytes)
-			if len(lines) > 0 {
-				return lines
-			}
-		}
-	}
-	return nil
-}
-
-func matchResolution(lines [][]byte, seg markers.ConflictSegment) (markers.Resolution, bool) {
-	ours := markers.SplitLinesKeepEOL(seg.Ours)
-	theirs := markers.SplitLinesKeepEOL(seg.Theirs)
-	both := append(append([][]byte{}, ours...), theirs...)
-
-	if slices.EqualFunc(lines, ours, bytes.Equal) {
-		return markers.ResolutionOurs, true
-	}
-	if slices.EqualFunc(lines, theirs, bytes.Equal) {
-		return markers.ResolutionTheirs, true
-	}
-	if slices.EqualFunc(lines, both, bytes.Equal) {
-		return markers.ResolutionBoth, true
-	}
-	if len(lines) == 0 {
-		return markers.ResolutionNone, true
-	}
-	return markers.ResolutionUnset, false
-}
-
-func containsConflictMarkers(lines [][]byte) bool {
-	for _, line := range lines {
-		if bytes.HasPrefix(line, []byte("<<<<<<<")) ||
-			bytes.HasPrefix(line, []byte("|||||||")) ||
-			bytes.HasPrefix(line, []byte("=======")) ||
-			bytes.HasPrefix(line, []byte(">>>>>>>")) {
-			return true
-		}
-	}
-	return false
-}
-
-func findSubslice(haystack [][]byte, start int, needle [][]byte) int {
-	if len(needle) == 0 {
-		return start
-	}
-	if start < 0 {
-		start = 0
-	}
-	for i := start; i+len(needle) <= len(haystack); i++ {
-		matched := true
-		for j := range needle {
-			if !bytes.Equal(haystack[i+j], needle[j]) {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return i
-		}
-	}
-	return -1
-}
-
-func cloneManualResolved(src map[int][]byte) map[int][]byte {
-	if len(src) == 0 {
-		return map[int][]byte{}
-	}
-	cloned := make(map[int][]byte, len(src))
-	for key, value := range src {
-		cloned[key] = append([]byte(nil), value...)
-	}
-	return cloned
-}
-
-func manualResolvedEqual(left map[int][]byte, right map[int][]byte) bool {
-	if len(left) != len(right) {
+	leftLabels, leftKnown := left.state.MergedLabels()
+	rightLabels, rightKnown := right.state.MergedLabels()
+	if len(leftLabels) != len(rightLabels) || len(leftKnown) != len(rightKnown) {
 		return false
 	}
-	for key, leftValue := range left {
-		rightValue, ok := right[key]
-		if !ok || !bytes.Equal(leftValue, rightValue) {
+	for i := range leftLabels {
+		if leftLabels[i] != rightLabels[i] || leftKnown[i] != rightKnown[i] {
 			return false
 		}
 	}
-	return true
-}
-
-func resolverSnapshotsEqual(left resolverSnapshot, right resolverSnapshot) bool {
-	return markers.DocumentsEqual(left.doc, right.doc) && manualResolvedEqual(left.manualResolved, right.manualResolved)
+	return markers.DocumentsEqual(left.state.Document(), right.state.Document()) && bytes.Equal(left.state.RenderMerged(), right.state.RenderMerged())
 }
 
 func (m *model) captureResolverSnapshot() resolverSnapshot {
 	return resolverSnapshot{
-		doc:            markers.CloneDocument(m.state.Document()),
-		manualResolved: cloneManualResolved(m.manualResolved),
+		state: m.state.Clone(),
 	}
 }
 
 func (m *model) restoreResolverSnapshot(snapshot resolverSnapshot) {
-	m.state.ReplaceDocument(snapshot.doc)
-	m.doc = m.state.Document()
-	m.manualResolved = cloneManualResolved(snapshot.manualResolved)
+	m.state = snapshot.state.Clone()
+	m.refreshResolverCaches()
 }
 
 func (m *model) pushResolverUndo(snapshot resolverSnapshot) {
