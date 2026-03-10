@@ -44,31 +44,6 @@ func TestBuildResultLinesManualResolved(t *testing.T) {
 	}
 }
 
-func TestApplyMergedResolutionsManualHunk(t *testing.T) {
-	diff3 := []byte("header\n<<<<<<< HEAD\nours1\n||||||| base\nbase1\n=======\ntheirs1\n>>>>>>> branch\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nfooter\n")
-	doc, err := markers.Parse(diff3)
-	if err != nil {
-		t.Fatalf("Parse error = %v", err)
-	}
-
-	merged := []byte("header\nmanual1\nmid\n<<<<<<< HEAD\nours2\n=======\ntheirs2\n>>>>>>> branch\nfooter\n")
-	updated, manual, _, _, err := applyMergedResolutions(doc, merged)
-	if err != nil {
-		t.Fatalf("applyMergedResolutions error = %v", err)
-	}
-	if len(manual) != 1 {
-		t.Fatalf("manualResolved count = %d, want 1", len(manual))
-	}
-	if _, ok := manual[0]; !ok {
-		t.Fatalf("manualResolved missing conflict 0")
-	}
-	ref := updated.Conflicts[0]
-	seg := updated.Segments[ref.SegmentIndex].(markers.ConflictSegment)
-	if seg.Resolution != markers.ResolutionUnset {
-		t.Fatalf("conflict 0 resolution = %q, want unset", seg.Resolution)
-	}
-}
-
 func TestDiffEntriesCategories(t *testing.T) {
 	base := []string{"line1", "line2"}
 	side := []string{"line1", "line2-mod"}

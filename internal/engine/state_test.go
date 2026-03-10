@@ -301,6 +301,28 @@ line2
 	}
 }
 
+func TestImportMergedManualConflict(t *testing.T) {
+	input := []byte("line1\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nline2\n")
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	state, err := NewState(doc)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+	if err := state.ImportMerged([]byte("line1\nmanual\nline2\n")); err != nil {
+		t.Fatalf("ImportMerged failed: %v", err)
+	}
+	manual := state.ManualResolved()
+	if got := string(manual[0]); got != "manual\n" {
+		t.Fatalf("manual[0] = %q, want %q", got, "manual\\n")
+	}
+	if got := string(state.RenderMerged()); got != "line1\nmanual\nline2\n" {
+		t.Fatalf("RenderMerged = %q", got)
+	}
+}
+
 func TestPreviewDeterministic(t *testing.T) {
 	input := []byte(`line1
 <<<<<<< HEAD

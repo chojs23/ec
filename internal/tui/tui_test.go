@@ -21,6 +21,26 @@ import (
 	"github.com/chojs23/ec/internal/mergeview"
 )
 
+func parseSingleConflictDoc(t *testing.T) markers.Document {
+	t.Helper()
+	data := []byte("start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nend\n")
+	doc, err := markers.Parse(data)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	return doc
+}
+
+func conflictSegment(t *testing.T, doc markers.Document, index int) markers.ConflictSegment {
+	t.Helper()
+	ref := doc.Conflicts[index]
+	seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+	if !ok {
+		t.Fatalf("expected conflict segment")
+	}
+	return seg
+}
+
 func TestModelQuitBackToSelector(t *testing.T) {
 	m := model{}
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
@@ -101,6 +121,9 @@ func TestOpenEditorWithUnresolvedConflicts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
+	if err := state.ImportMerged([]byte("line1\nmanual\nline2\n")); err != nil {
+		t.Fatalf("ImportMerged error = %v", err)
+	}
 
 	editorPath := filepath.Join(tmpDir, "editor.sh")
 	if err := os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -144,6 +167,9 @@ func TestOpenEditorUsesManualResolvedPreview(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
+	if err := state.ImportMerged([]byte("line1\nmanual\nline2\n")); err != nil {
+		t.Fatalf("ImportMerged error = %v", err)
+	}
 
 	editorPath := filepath.Join(tmpDir, "editor.sh")
 	if err := os.WriteFile(editorPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -157,11 +183,10 @@ func TestOpenEditorUsesManualResolvedPreview(t *testing.T) {
 	defer os.Setenv("EDITOR", originalEditor)
 
 	m := model{
-		state:          state,
-		doc:            doc,
-		manualResolved: map[int][]byte{0: []byte("manual\n")},
-		opts:           cliOptionsWithMergedPath(mergedPath),
+		state: state,
+		opts:  cliOptionsWithMergedPath(mergedPath),
 	}
+	m.refreshResolverCaches()
 
 	msg := m.openEditor()()
 	if !strings.Contains(fmt.Sprintf("%T", msg), "execMsg") {
@@ -882,35 +907,6 @@ func TestModelViewNoLabelsWithoutMergedLabels(t *testing.T) {
 	}
 	if strings.Contains(view, "THEIRS (") {
 		t.Fatalf("expected plain THEIRS without label when mergedLabels is nil, got:\n%s", view)
-	}
-}
-
-func TestLabelsFromConflictSpan(t *testing.T) {
-	lines := markers.SplitLinesKeepEOL([]byte("<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> feature/add-auth\n"))
-	labels := labelsFromConflictSpan(lines)
-	if labels.OursLabel != "HEAD" {
-		t.Fatalf("OursLabel = %q, want HEAD", labels.OursLabel)
-	}
-	if labels.TheirsLabel != "feature/add-auth" {
-		t.Fatalf("TheirsLabel = %q, want feature/add-auth", labels.TheirsLabel)
-	}
-}
-
-func TestLabelsFromConflictSpanWithHash(t *testing.T) {
-	lines := markers.SplitLinesKeepEOL([]byte("<<<<<<< HEAD\nours\n||||||| abc1234\nbase\n=======\ntheirs\n>>>>>>> abc1234def5678901234 (main change)\n"))
-	labels := labelsFromConflictSpan(lines)
-	if labels.BaseLabel != "abc1234" {
-		t.Fatalf("BaseLabel = %q, want abc1234", labels.BaseLabel)
-	}
-	if labels.TheirsLabel != "abc1234def5678901234 (main change)" {
-		t.Fatalf("TheirsLabel = %q, want raw label", labels.TheirsLabel)
-	}
-}
-
-func TestLabelsFromConflictSpanInvalid(t *testing.T) {
-	labels := labelsFromConflictSpan(markers.SplitLinesKeepEOL([]byte("no conflicts here")))
-	if labels != (conflictLabels{}) {
-		t.Fatalf("expected zero labels for no-conflict input, got %+v", labels)
 	}
 }
 
@@ -1803,16 +1799,15 @@ func TestWriteResolvedPreservesMergedLabelsForUnresolved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewState error = %v", err)
 	}
+	if err := state.ImportMerged([]byte("<<<<<<< ec\nours\n=======\ntheirs\n>>>>>>> main\n")); err != nil {
+		t.Fatalf("ImportMerged error = %v", err)
+	}
 
 	m := model{
 		state: state,
 		opts:  cli.Options{MergedPath: mergedPath},
-		mergedLabels: []conflictLabels{{
-			OursLabel:   "ec",
-			TheirsLabel: "main",
-		}},
-		mergedLabelKnown: []bool{true},
 	}
+	m.refreshResolverCaches()
 
 	if err := m.writeResolved(); err != nil {
 		t.Fatalf("writeResolved error = %v", err)

@@ -2,15 +2,16 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/chojs23/ec/internal/cli"
+	"github.com/chojs23/ec/internal/engine"
 	"github.com/chojs23/ec/internal/markers"
 	"github.com/chojs23/ec/internal/mergeview"
 )
 
 type resolverDocumentState struct {
+	state            *engine.State
 	doc              markers.Document
 	manualResolved   map[int][]byte
 	mergedLabels     []conflictLabels
@@ -22,27 +23,39 @@ func loadResolverDocumentState(ctx context.Context, opts cli.Options) (resolverD
 	if err != nil {
 		return resolverDocumentState{}, err
 	}
-
-	state := resolverDocumentState{
-		doc:              canonicalDoc,
-		manualResolved:   map[int][]byte{},
-		mergedLabels:     make([]conflictLabels, len(canonicalDoc.Conflicts)),
-		mergedLabelKnown: make([]bool, len(canonicalDoc.Conflicts)),
+	runtimeState, err := engine.NewState(canonicalDoc)
+	if err != nil {
+		return resolverDocumentState{}, err
 	}
+
+	state := buildResolverDocumentState(runtimeState)
 
 	mergedBytes, err := os.ReadFile(opts.MergedPath)
 	if err != nil {
 		return state, nil
 	}
 
-	updated, manual, labels, known, err := applyMergedResolutions(canonicalDoc, mergedBytes)
-	if err != nil {
-		return resolverDocumentState{}, fmt.Errorf("apply merged resolutions: %w", err)
+	if err := runtimeState.ImportMerged(mergedBytes); err != nil {
+		return resolverDocumentState{}, err
 	}
+	return buildResolverDocumentState(runtimeState), nil
+}
 
-	state.doc = updated
-	state.manualResolved = manual
-	state.mergedLabels = labels
-	state.mergedLabelKnown = known
-	return state, nil
+func buildResolverDocumentState(state *engine.State) resolverDocumentState {
+	labels, known := state.MergedLabels()
+	mergedLabels := make([]conflictLabels, len(labels))
+	for i, label := range labels {
+		mergedLabels[i] = conflictLabels{
+			OursLabel:   label.OursLabel,
+			BaseLabel:   label.BaseLabel,
+			TheirsLabel: label.TheirsLabel,
+		}
+	}
+	return resolverDocumentState{
+		state:            state,
+		doc:              state.Document(),
+		manualResolved:   state.ManualResolved(),
+		mergedLabels:     mergedLabels,
+		mergedLabelKnown: known,
+	}
 }

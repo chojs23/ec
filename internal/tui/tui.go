@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -200,8 +199,7 @@ type conflictLabels struct {
 }
 
 type resolverSnapshot struct {
-	doc            markers.Document
-	manualResolved map[int][]byte
+	state *engine.State
 }
 
 const (
@@ -233,17 +231,12 @@ func Run(ctx context.Context, opts cli.Options) error {
 	}
 
 	// Initialize state
-	state, err := engine.NewState(doc)
-	if err != nil {
-		return fmt.Errorf("failed to create state: %w", err)
-	}
-
 	baseLines, oursLines, theirsLines, ranges, useFullDiff := prepareFullDiff(doc, opts)
 
 	m := model{
 		ctx:              ctx,
 		opts:             opts,
-		state:            state,
+		state:            resolverState.state,
 		doc:              doc,
 		baseLines:        baseLines,
 		oursLines:        oursLines,
@@ -316,12 +309,7 @@ func (m *model) openEditor() tea.Cmd {
 		}
 	}
 
-	resolved, _, err := renderMergedOutput(m.state.Document(), m.manualResolved, m.mergedLabels, m.mergedLabelKnown)
-	if err != nil {
-		return func() tea.Msg {
-			return editorFinishedMsg{err: fmt.Errorf("cannot generate preview for editor: %w", err)}
-		}
-	}
+	resolved := m.state.RenderMerged()
 
 	if m.opts.Backup {
 		bak := m.opts.MergedPath + ".ec.bak"
@@ -354,12 +342,16 @@ func (m *model) openEditor() tea.Cmd {
 }
 
 func (m *model) reloadFromFile() error {
-	resolverState, err := loadResolverDocumentState(m.ctx, m.opts)
+	mergedBytes, err := os.ReadFile(m.opts.MergedPath)
 	if err != nil {
 		return err
 	}
+	nextState := m.state.Clone()
+	if err := nextState.ImportMerged(mergedBytes); err != nil {
+		return err
+	}
 
-	doc := resolverState.doc
+	doc := nextState.Document()
 
 	if !m.opts.AllowMissingBase {
 		if err := engine.ValidateBaseCompleteness(doc); err != nil {
@@ -372,11 +364,8 @@ func (m *model) reloadFromFile() error {
 	}
 
 	return m.applyResolverMutation(func() error {
-		m.state.ReplaceDocument(doc)
-		m.doc = m.state.Document()
-		m.manualResolved = resolverState.manualResolved
-		m.mergedLabels = resolverState.mergedLabels
-		m.mergedLabelKnown = resolverState.mergedLabelKnown
+		m.state = nextState
+		m.refreshResolverCaches()
 
 		if m.currentConflict >= len(m.doc.Conflicts) {
 			m.currentConflict = len(m.doc.Conflicts) - 1
@@ -458,10 +447,16 @@ func isTrulyMissingBaseStage(ctx context.Context, mergedPath string) (bool, bool
 	if err != nil {
 		return false, false
 	}
+	if resolvedMergedPath, err := filepath.EvalSymlinks(absMergedPath); err == nil {
+		absMergedPath = resolvedMergedPath
+	}
 
 	repoRoot, err := gitutil.RepoRoot(ctx, filepath.Dir(absMergedPath))
 	if err != nil {
 		return false, false
+	}
+	if resolvedRepoRoot, err := filepath.EvalSymlinks(repoRoot); err == nil {
+		repoRoot = resolvedRepoRoot
 	}
 
 	relPath, err := filepath.Rel(repoRoot, absMergedPath)
@@ -757,8 +752,7 @@ func (m *model) applySelectedSide() error {
 		if err := m.state.ApplyResolution(m.currentConflict, resolution); err != nil {
 			return err
 		}
-		delete(m.manualResolved, m.currentConflict)
-		m.doc = m.state.Document()
+		m.refreshResolverCaches()
 		return nil
 	})
 }
@@ -768,8 +762,7 @@ func (m *model) applyResolution(resolution markers.Resolution) error {
 		if err := m.state.ApplyResolution(m.currentConflict, resolution); err != nil {
 			return err
 		}
-		delete(m.manualResolved, m.currentConflict)
-		m.doc = m.state.Document()
+		m.refreshResolverCaches()
 		return nil
 	})
 }
@@ -779,8 +772,7 @@ func (m *model) applyAll(resolution markers.Resolution) error {
 		if err := m.state.ApplyAll(resolution); err != nil {
 			return err
 		}
-		m.manualResolved = map[int][]byte{}
-		m.doc = m.state.Document()
+		m.refreshResolverCaches()
 		return nil
 	})
 }
@@ -942,7 +934,7 @@ func (m *model) handleWrite() (tea.Cmd, error) {
 	if err := m.writeResolved(); err != nil {
 		return nil, fmt.Errorf("failed to write resolved: %w", err)
 	}
-	m.doc = m.state.Document()
+	m.refreshResolverCaches()
 	m.updateViewports()
 	return m.showToast("Saved", 2), nil
 }
@@ -1122,10 +1114,8 @@ func (m *model) scrollVertical(delta int) {
 }
 
 func (m *model) writeResolved() error {
-	resolved, allowUnresolved, err := renderMergedOutput(m.state.Document(), m.manualResolved, m.mergedLabels, m.mergedLabelKnown)
-	if err != nil {
-		return fmt.Errorf("cannot write: %w", err)
-	}
+	resolved := m.state.RenderMerged()
+	allowUnresolved := m.state.HasUnresolvedConflicts()
 
 	// Read original merged file for backup
 	mergedBytes, err := os.ReadFile(m.opts.MergedPath)
@@ -1174,40 +1164,6 @@ func allResolved(doc markers.Document, manualResolved map[int][]byte) bool {
 		}
 	}
 	return true
-}
-
-func renderMergedOutput(doc markers.Document, manualResolved map[int][]byte, mergedLabels []conflictLabels, mergedLabelKnown []bool) ([]byte, bool, error) {
-	var out bytes.Buffer
-	hasUnresolved := false
-	conflictIndex := -1
-
-	for _, seg := range doc.Segments {
-		switch s := seg.(type) {
-		case markers.TextSegment:
-			out.Write(s.Bytes)
-		case markers.ConflictSegment:
-			conflictIndex++
-			if manualBytes, ok := manualResolved[conflictIndex]; ok {
-				out.Write(manualBytes)
-				continue
-			}
-			labels := conflictLabels{
-				OursLabel:   s.OursLabel,
-				BaseLabel:   s.BaseLabel,
-				TheirsLabel: s.TheirsLabel,
-			}
-			if conflictIndex < len(mergedLabels) && conflictIndex < len(mergedLabelKnown) && mergedLabelKnown[conflictIndex] {
-				labels = mergedLabels[conflictIndex]
-			}
-			if markers.AppendConflictSegment(&out, s, labels.OursLabel, labels.BaseLabel, labels.TheirsLabel) {
-				hasUnresolved = true
-			}
-		default:
-			return nil, false, fmt.Errorf("unknown segment type %T", seg)
-		}
-	}
-
-	return out.Bytes(), hasUnresolved, nil
 }
 
 func formatLabel(label string) string {
@@ -1264,6 +1220,21 @@ func renderResultPaneTitle(statusText string, paneWidth int, titleStyle lipgloss
 	}
 
 	return titleStyle.Render(prefix + statusStyle.Render(trimmedStatus))
+}
+
+func (m *model) refreshResolverCaches() {
+	m.doc = m.state.Document()
+	m.manualResolved = m.state.ManualResolved()
+	labels, known := m.state.MergedLabels()
+	m.mergedLabels = make([]conflictLabels, len(labels))
+	for i, label := range labels {
+		m.mergedLabels[i] = conflictLabels{
+			OursLabel:   label.OursLabel,
+			BaseLabel:   label.BaseLabel,
+			TheirsLabel: label.TheirsLabel,
+		}
+	}
+	m.mergedLabelKnown = known
 }
 
 func truncateDisplayWidth(value string, maxWidth int) string {
@@ -1336,734 +1307,32 @@ func isHexByte(b byte) bool {
 	return (b >= '0' && b <= '9') || (b >= 'a' && b <= 'f') || (b >= 'A' && b <= 'F')
 }
 
-func applyMergedResolutions(doc markers.Document, mergedBytes []byte) (markers.Document, map[int][]byte, []conflictLabels, []bool, error) {
-	mergedLines := markers.SplitLinesKeepEOL(mergedBytes)
-	pos := 0
-	manualResolved := map[int][]byte{}
-	alignedLabels := make([]conflictLabels, len(doc.Conflicts))
-	alignedLabelKnown := make([]bool, len(doc.Conflicts))
-
-	conflictIndex := -1
-	pendingTextIndex := -1
-	pendingTextStart := 0
-
-	setPendingText := func(end int) error {
-		if pendingTextIndex < 0 {
-			return nil
-		}
-		if end < pendingTextStart {
-			end = pendingTextStart
-		}
-		if end > len(mergedLines) {
-			end = len(mergedLines)
-		}
-
-		textSeg, ok := doc.Segments[pendingTextIndex].(markers.TextSegment)
-		if !ok {
-			return fmt.Errorf("internal: expected text segment at index %d", pendingTextIndex)
-		}
-		textSeg.Bytes = bytes.Join(mergedLines[pendingTextStart:end], nil)
-		doc.Segments[pendingTextIndex] = textSeg
-		pendingTextIndex = -1
-		return nil
-	}
-
-	for i, seg := range doc.Segments {
-		switch s := seg.(type) {
-		case markers.TextSegment:
-			_ = s
-			pendingTextIndex = i
-			pendingTextStart = pos
-
-		case markers.ConflictSegment:
-			conflictIndex++
-
-			searchPos := pos
-			var pendingTextLines [][]byte
-			if pendingTextIndex >= 0 {
-				textSeg, ok := doc.Segments[pendingTextIndex].(markers.TextSegment)
-				if !ok {
-					return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("internal: expected text segment at index %d", pendingTextIndex)
-				}
-				pendingTextLines = markers.SplitLinesKeepEOL(textSeg.Bytes)
-				if len(pendingTextLines) > 0 {
-					searchPos = alignTextSegmentEnd(mergedLines, pos, pendingTextLines)
-					if searchPos < pos {
-						searchPos = pos
-					}
-					if searchPos > len(mergedLines) {
-						searchPos = len(mergedLines)
-					}
-				}
-			}
-
-			nextTextLines := nextTextSegmentLines(doc.Segments, i+1)
-			nextIdx := -1
-			if len(nextTextLines) > 0 {
-				nextIdx = findSubslice(mergedLines, searchPos, nextTextLines)
-				if nextIdx == -1 {
-					nextIdx = findApproxSubslice(mergedLines, searchPos, nextTextLines)
-				}
-				if nextIdx == searchPos && textLinesBlankOnly(nextTextLines) {
-					if fallbackIdx := findNextConflictBoundary(mergedLines, searchPos, doc.Segments, i+1); fallbackIdx > searchPos {
-						nextIdx = fallbackIdx
-					}
-				}
-			}
-			if nextIdx == -1 {
-				nextIdx = len(mergedLines)
-			}
-
-			conflictPos := pos
-			if textAlignedBeforeConflict(mergedLines, pos, searchPos, pendingTextLines) {
-				conflictPos = searchPos
-			}
-
-			if nextIdx < conflictPos {
-				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("failed to align conflict segment")
-			}
-			spanLines := mergedLines[conflictPos:nextIdx]
-
-			start, end, resolution, manualBytes, labels, labelsKnown := classifyConflictSpan(spanLines, pendingTextLines, s)
-			if start < 0 || end < start || end > len(spanLines) {
-				return doc, manualResolved, alignedLabels, alignedLabelKnown, fmt.Errorf("internal: invalid conflict span classification")
-			}
-
-			if err := setPendingText(conflictPos + start); err != nil {
-				return doc, manualResolved, alignedLabels, alignedLabelKnown, err
-			}
-
-			if labelsKnown {
-				alignedLabels[conflictIndex] = labels
-				alignedLabelKnown[conflictIndex] = true
-			}
-
-			if manualBytes != nil {
-				manualResolved[conflictIndex] = manualBytes
-			} else {
-				s.Resolution = resolution
-				doc.Segments[i] = s
-			}
-
-			pos = conflictPos + end
-		}
-	}
-
-	if err := setPendingText(len(mergedLines)); err != nil {
-		return doc, manualResolved, alignedLabels, alignedLabelKnown, err
-	}
-
-	return doc, manualResolved, alignedLabels, alignedLabelKnown, nil
-}
-
-func classifyConflictSpan(spanLines [][]byte, pendingTextLines [][]byte, seg markers.ConflictSegment) (int, int, markers.Resolution, []byte, conflictLabels, bool) {
-	if markerStart, markerEnd, ok := locateConflictMarkerSpan(spanLines); ok {
-		labels := labelsFromConflictSpan(spanLines[markerStart:markerEnd])
-		return markerStart, markerEnd, markers.ResolutionUnset, nil, labels, true
-	}
-
-	if len(spanLines) == 0 {
-		return 0, 0, inferEmptyOutputResolution(seg), nil, conflictLabels{}, false
-	}
-	if textLinesBlankOnly(spanLines) {
-		return len(spanLines), len(spanLines), inferEmptyOutputResolution(seg), nil, conflictLabels{}, false
-	}
-
-	if matchStart, matchEnd, resolution, ok := findBestResolutionMatch(spanLines, seg); ok {
-		return matchStart, matchEnd, resolution, nil, conflictLabels{}, false
-	}
-
-	manualStart, manualExact := detectManualStart(spanLines, pendingTextLines)
-	if manualStart < len(spanLines) && textLinesBlankOnly(spanLines[manualStart:]) {
-		return len(spanLines), len(spanLines), inferEmptyOutputResolution(seg), nil, conflictLabels{}, false
-	}
-	if manualStart == len(spanLines) {
-		if manualExact && (!textLinesBlankOnly(pendingTextLines) || textLinesBlankOnly(spanLines)) {
-			return manualStart, len(spanLines), inferEmptyOutputResolution(seg), nil, conflictLabels{}, false
-		}
-		return 0, len(spanLines), markers.ResolutionUnset, bytes.Join(spanLines, nil), conflictLabels{}, false
-	}
-	return manualStart, len(spanLines), markers.ResolutionUnset, bytes.Join(spanLines[manualStart:], nil), conflictLabels{}, false
-}
-
-func inferEmptyOutputResolution(seg markers.ConflictSegment) markers.Resolution {
-	oursEmpty := len(markers.SplitLinesKeepEOL(seg.Ours)) == 0
-	theirsEmpty := len(markers.SplitLinesKeepEOL(seg.Theirs)) == 0
-
-	if oursEmpty && !theirsEmpty {
-		return markers.ResolutionOurs
-	}
-	if theirsEmpty && !oursEmpty {
-		return markers.ResolutionTheirs
-	}
-
-	return markers.ResolutionNone
-}
-
-func detectManualStart(spanLines [][]byte, pendingTextLines [][]byte) (int, bool) {
-	if len(spanLines) == 0 || len(pendingTextLines) == 0 {
-		return 0, false
-	}
-
-	if idx := findSubslice(spanLines, 0, pendingTextLines); idx != -1 {
-		start := idx + len(pendingTextLines)
-		if start > len(spanLines) {
-			return len(spanLines), true
-		}
-		return start, true
-	}
-
-	if idx := findApproxSubslice(spanLines, 0, pendingTextLines); idx != -1 {
-		start := idx + len(pendingTextLines)
-		if start < 0 {
-			start = 0
-		}
-		if start > len(spanLines) {
-			start = len(spanLines)
-		}
-		return start, false
-	}
-
-	return 0, false
-}
-
-func locateConflictMarkerSpan(lines [][]byte) (int, int, bool) {
-	start := -1
-	for i, line := range lines {
-		if bytes.HasPrefix(line, []byte("<<<<<<<")) {
-			start = i
-			break
-		}
-	}
-	if start == -1 {
-		return -1, -1, false
-	}
-
-	for i := start + 1; i < len(lines); i++ {
-		if bytes.HasPrefix(lines[i], []byte(">>>>>>>")) {
-			return start, i + 1, true
-		}
-	}
-
-	return start, len(lines), true
-}
-
-func findBestResolutionMatch(spanLines [][]byte, seg markers.ConflictSegment) (int, int, markers.Resolution, bool) {
-	if len(spanLines) == 0 {
-		return 0, 0, inferEmptyOutputResolution(seg), true
-	}
-
-	ours := markers.SplitLinesKeepEOL(seg.Ours)
-	theirs := markers.SplitLinesKeepEOL(seg.Theirs)
-	both := append(append([][]byte{}, ours...), theirs...)
-
-	candidates := []struct {
-		resolution markers.Resolution
-		lines      [][]byte
-	}{
-		{resolution: markers.ResolutionOurs, lines: ours},
-		{resolution: markers.ResolutionTheirs, lines: theirs},
-		{resolution: markers.ResolutionBoth, lines: both},
-	}
-
-	found := false
-	bestStart := 0
-	bestEnd := 0
-	bestResolution := markers.ResolutionUnset
-	bestTotal := 0
-	bestSuffix := 0
-	bestPrefix := 0
-
-	for _, candidate := range candidates {
-		if len(candidate.lines) == 0 {
-			continue
-		}
-
-		searchStart := 0
-		for {
-			idx := findSubslice(spanLines, searchStart, candidate.lines)
-			if idx == -1 {
-				break
-			}
-
-			end := idx + len(candidate.lines)
-			prefix := idx
-			suffix := len(spanLines) - end
-			total := prefix + suffix
-
-			if !found ||
-				total < bestTotal ||
-				(total == bestTotal && suffix < bestSuffix) ||
-				(total == bestTotal && suffix == bestSuffix && prefix < bestPrefix) {
-				found = true
-				bestStart = idx
-				bestEnd = end
-				bestResolution = candidate.resolution
-				bestTotal = total
-				bestSuffix = suffix
-				bestPrefix = prefix
-			}
-
-			searchStart = idx + 1
-		}
-	}
-
-	if !found {
-		return 0, 0, markers.ResolutionUnset, false
-	}
-
-	return bestStart, bestEnd, bestResolution, true
-}
-
-func findApproxSubslice(haystack [][]byte, start int, needle [][]byte) int {
-	if len(needle) == 0 {
-		return start
-	}
-	if start < 0 {
-		start = 0
-	}
-
-	if len(needle) == 1 {
-		return findApproxLineIndex(haystack, start, needle[0])
-	}
-
-	window := len(needle)
-	if window > 8 {
-		window = 8
-	}
-
-	for size := window; size >= 2; size-- {
-		for offset := 0; offset+size <= len(needle); offset++ {
-			chunk := needle[offset : offset+size]
-			idx := findSubslice(haystack, start, chunk)
-			if idx == -1 {
-				continue
-			}
-
-			candidateStart := idx - offset
-			if candidateStart < start {
-				continue
-			}
-
-			return candidateStart
-		}
-	}
-
-	return -1
-}
-
-func findApproxLineIndex(lines [][]byte, start int, needle []byte) int {
-	needleTrimmed := bytes.TrimRight(needle, "\r\n")
-	if len(needleTrimmed) == 0 {
-		return -1
-	}
-
-	bestIndex := -1
-	bestScore := 0
-	for i := start; i < len(lines); i++ {
-		score := lineSimilarityPercent(lines[i], needle)
-		if score > bestScore {
-			bestScore = score
-			bestIndex = i
-		}
-	}
-
-	if bestScore >= 70 {
-		return bestIndex
-	}
-
-	return -1
-}
-
-func textAlignedBeforeConflict(mergedLines [][]byte, pos int, searchPos int, pendingTextLines [][]byte) bool {
-	if pos < 0 || searchPos <= pos || searchPos > len(mergedLines) {
-		return false
-	}
-
-	alignedLines := mergedLines[pos:searchPos]
-	if len(alignedLines) == 0 {
-		return false
-	}
-
-	if idx := findSubslice(pendingTextLines, 0, alignedLines); idx != -1 {
-		return true
-	}
-
-	if idx := findApproxSubslice(pendingTextLines, 0, alignedLines); idx != -1 {
-		return true
-	}
-
-	if canAlignPreservedText(alignedLines, pendingTextLines) {
-		return true
-	}
-
-	return false
-}
-
-func canAlignPreservedText(alignedLines [][]byte, pendingTextLines [][]byte) bool {
-	alignedIndex := 0
-	pendingIndex := 0
-
-	for alignedIndex < len(alignedLines) && pendingIndex < len(pendingTextLines) {
-		if linesEquivalentForAlignment(alignedLines[alignedIndex], pendingTextLines[pendingIndex]) {
-			alignedIndex++
-			pendingIndex++
-			continue
-		}
-
-		if alignedIndex+1 < len(alignedLines) && linesEquivalentForAlignment(alignedLines[alignedIndex+1], pendingTextLines[pendingIndex]) {
-			alignedIndex++
-			continue
-		}
-
-		if pendingIndex+1 < len(pendingTextLines) && linesEquivalentForAlignment(alignedLines[alignedIndex], pendingTextLines[pendingIndex+1]) {
-			pendingIndex++
-			continue
-		}
-
-		if lineSimilarityPercent(alignedLines[alignedIndex], pendingTextLines[pendingIndex]) >= 70 {
-			alignedIndex++
-			pendingIndex++
-			continue
-		}
-
-		return false
-	}
-
-	return alignedIndex == len(alignedLines)
-}
-
-func alignTextSegmentEnd(mergedLines [][]byte, start int, textLines [][]byte) int {
-	if start < 0 {
-		start = 0
-	}
-	if start > len(mergedLines) {
-		return len(mergedLines)
-	}
-	if len(textLines) == 0 {
-		return start
-	}
-
-	if idx := findSubslice(mergedLines, start, textLines); idx != -1 {
-		return idx + len(textLines)
-	}
-
-	mergedIndex := start
-	textIndex := 0
-	for textIndex < len(textLines) && mergedIndex < len(mergedLines) {
-		if linesEquivalentForAlignment(mergedLines[mergedIndex], textLines[textIndex]) {
-			mergedIndex++
-			textIndex++
-			continue
-		}
-
-		if mergedIndex+1 < len(mergedLines) && linesEquivalentForAlignment(mergedLines[mergedIndex+1], textLines[textIndex]) {
-			mergedIndex++
-			continue
-		}
-
-		if textIndex+1 < len(textLines) && linesEquivalentForAlignment(mergedLines[mergedIndex], textLines[textIndex+1]) {
-			textIndex++
-			continue
-		}
-
-		mergedIndex++
-		textIndex++
-	}
-
-	if mergedIndex > len(mergedLines) {
-		return len(mergedLines)
-	}
-
-	return mergedIndex
-}
-
-func linesEquivalentForAlignment(a []byte, b []byte) bool {
-	aTrimmed := bytes.TrimRight(a, "\r\n")
-	bTrimmed := bytes.TrimRight(b, "\r\n")
-
-	if bytes.Equal(aTrimmed, bTrimmed) {
-		return true
-	}
-
-	if len(aTrimmed) == 0 || len(bTrimmed) == 0 {
-		return false
-	}
-
-	return lineSimilarityPercent(a, b) >= 88
-}
-
-func lineSimilarityPercent(a []byte, b []byte) int {
-	aTrimmed := bytes.TrimRight(a, "\r\n")
-	bTrimmed := bytes.TrimRight(b, "\r\n")
-
-	if bytes.Equal(aTrimmed, bTrimmed) {
-		return 100
-	}
-
-	maxLen := len(aTrimmed)
-	if len(bTrimmed) > maxLen {
-		maxLen = len(bTrimmed)
-	}
-	if maxLen == 0 {
-		return 100
-	}
-
-	minLen := len(aTrimmed)
-	if len(bTrimmed) < minLen {
-		minLen = len(bTrimmed)
-	}
-
-	best := 0
-	if minLen > 0 && (bytes.Contains(aTrimmed, bTrimmed) || bytes.Contains(bTrimmed, aTrimmed)) {
-		best = minLen * 100 / maxLen
-	}
-
-	prefix := commonPrefixLen(aTrimmed, bTrimmed)
-	suffix := commonSuffixLen(aTrimmed, bTrimmed, prefix)
-	if prefix+suffix > minLen {
-		suffix = minLen - prefix
-		if suffix < 0 {
-			suffix = 0
-		}
-	}
-
-	combined := (prefix + suffix) * 100 / maxLen
-	if combined > best {
-		best = combined
-	}
-
-	return best
-}
-
-func commonPrefixLen(a []byte, b []byte) int {
-	limit := len(a)
-	if len(b) < limit {
-		limit = len(b)
-	}
-
-	count := 0
-	for count < limit && a[count] == b[count] {
-		count++
-	}
-
-	return count
-}
-
-func commonSuffixLen(a []byte, b []byte, prefix int) int {
-	limit := len(a)
-	if len(b) < limit {
-		limit = len(b)
-	}
-	if prefix > limit {
-		prefix = limit
-	}
-
-	maxSuffix := limit - prefix
-	count := 0
-	for count < maxSuffix {
-		ai := len(a) - 1 - count
-		bi := len(b) - 1 - count
-		if a[ai] != b[bi] {
-			break
-		}
-		count++
-	}
-
-	return count
-}
-
-func labelsFromConflictSpan(lines [][]byte) conflictLabels {
-	var labels conflictLabels
-	for _, line := range lines {
-		text := strings.TrimRight(string(line), "\r\n")
-		switch {
-		case strings.HasPrefix(text, "<<<<<<<"):
-			labels.OursLabel = strings.TrimSpace(strings.TrimPrefix(text, "<<<<<<<"))
-		case strings.HasPrefix(text, "|||||||"):
-			labels.BaseLabel = strings.TrimSpace(strings.TrimPrefix(text, "|||||||"))
-		case strings.HasPrefix(text, ">>>>>>>"):
-			labels.TheirsLabel = strings.TrimSpace(strings.TrimPrefix(text, ">>>>>>>"))
-		}
-	}
-	return labels
-}
-
-func textLinesBlankOnly(lines [][]byte) bool {
-	if len(lines) == 0 {
-		return false
-	}
-
-	for _, line := range lines {
-		if len(bytes.TrimSpace(line)) != 0 {
-			return false
-		}
-	}
-
-	return true
-}
-
-func findNextConflictBoundary(mergedLines [][]byte, start int, segments []markers.Segment, segmentStart int) int {
-	best := findConflictMarkerLineIndex(mergedLines, start)
-
-	nextConflict, ok := nextConflictSegment(segments, segmentStart)
-	if !ok {
-		return best
-	}
-
-	for _, candidate := range conflictMatchCandidates(nextConflict) {
-		if len(candidate) == 0 {
-			continue
-		}
-		idx := findSubslice(mergedLines, start, candidate)
-		if idx == -1 {
-			continue
-		}
-		if best == -1 || idx < best {
-			best = idx
-		}
-	}
-
-	return best
-}
-
-func nextConflictSegment(segments []markers.Segment, start int) (markers.ConflictSegment, bool) {
-	for i := start; i < len(segments); i++ {
-		if seg, ok := segments[i].(markers.ConflictSegment); ok {
-			return seg, true
-		}
-	}
-
-	return markers.ConflictSegment{}, false
-}
-
-func conflictMatchCandidates(seg markers.ConflictSegment) [][][]byte {
-	ours := markers.SplitLinesKeepEOL(seg.Ours)
-	theirs := markers.SplitLinesKeepEOL(seg.Theirs)
-	both := append(append([][]byte{}, ours...), theirs...)
-
-	return [][][]byte{ours, theirs, both}
-}
-
-func findConflictMarkerLineIndex(lines [][]byte, start int) int {
-	if start < 0 {
-		start = 0
-	}
-
-	for i := start; i < len(lines); i++ {
-		if bytes.HasPrefix(lines[i], []byte("<<<<<<<")) {
-			return i
-		}
-	}
-
-	return -1
-}
-
-func nextTextSegmentLines(segments []markers.Segment, start int) [][]byte {
-	for i := start; i < len(segments); i++ {
-		if text, ok := segments[i].(markers.TextSegment); ok {
-			lines := markers.SplitLinesKeepEOL(text.Bytes)
-			if len(lines) > 0 {
-				return lines
-			}
-		}
-	}
-	return nil
-}
-
-func matchResolution(lines [][]byte, seg markers.ConflictSegment) (markers.Resolution, bool) {
-	ours := markers.SplitLinesKeepEOL(seg.Ours)
-	theirs := markers.SplitLinesKeepEOL(seg.Theirs)
-	both := append(append([][]byte{}, ours...), theirs...)
-
-	if slices.EqualFunc(lines, ours, bytes.Equal) {
-		return markers.ResolutionOurs, true
-	}
-	if slices.EqualFunc(lines, theirs, bytes.Equal) {
-		return markers.ResolutionTheirs, true
-	}
-	if slices.EqualFunc(lines, both, bytes.Equal) {
-		return markers.ResolutionBoth, true
-	}
-	if len(lines) == 0 {
-		return markers.ResolutionNone, true
-	}
-	return markers.ResolutionUnset, false
-}
-
-func containsConflictMarkers(lines [][]byte) bool {
-	for _, line := range lines {
-		if bytes.HasPrefix(line, []byte("<<<<<<<")) ||
-			bytes.HasPrefix(line, []byte("|||||||")) ||
-			bytes.HasPrefix(line, []byte("=======")) ||
-			bytes.HasPrefix(line, []byte(">>>>>>>")) {
-			return true
-		}
-	}
-	return false
-}
-
-func findSubslice(haystack [][]byte, start int, needle [][]byte) int {
-	if len(needle) == 0 {
-		return start
-	}
-	if start < 0 {
-		start = 0
-	}
-	for i := start; i+len(needle) <= len(haystack); i++ {
-		matched := true
-		for j := range needle {
-			if !bytes.Equal(haystack[i+j], needle[j]) {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			return i
-		}
-	}
-	return -1
-}
-
-func cloneManualResolved(src map[int][]byte) map[int][]byte {
-	if len(src) == 0 {
-		return map[int][]byte{}
-	}
-	cloned := make(map[int][]byte, len(src))
-	for key, value := range src {
-		cloned[key] = append([]byte(nil), value...)
-	}
-	return cloned
-}
-
-func manualResolvedEqual(left map[int][]byte, right map[int][]byte) bool {
-	if len(left) != len(right) {
-		return false
-	}
-	for key, leftValue := range left {
-		rightValue, ok := right[key]
-		if !ok || !bytes.Equal(leftValue, rightValue) {
-			return false
-		}
-	}
-	return true
-}
-
 func resolverSnapshotsEqual(left resolverSnapshot, right resolverSnapshot) bool {
-	return markers.DocumentsEqual(left.doc, right.doc) && manualResolvedEqual(left.manualResolved, right.manualResolved)
+	if left.state == nil || right.state == nil {
+		return left.state == nil && right.state == nil
+	}
+	leftLabels, leftKnown := left.state.MergedLabels()
+	rightLabels, rightKnown := right.state.MergedLabels()
+	if len(leftLabels) != len(rightLabels) || len(leftKnown) != len(rightKnown) {
+		return false
+	}
+	for i := range leftLabels {
+		if leftLabels[i] != rightLabels[i] || leftKnown[i] != rightKnown[i] {
+			return false
+		}
+	}
+	return markers.DocumentsEqual(left.state.Document(), right.state.Document()) && bytes.Equal(left.state.RenderMerged(), right.state.RenderMerged())
 }
 
 func (m *model) captureResolverSnapshot() resolverSnapshot {
 	return resolverSnapshot{
-		doc:            markers.CloneDocument(m.state.Document()),
-		manualResolved: cloneManualResolved(m.manualResolved),
+		state: m.state.Clone(),
 	}
 }
 
 func (m *model) restoreResolverSnapshot(snapshot resolverSnapshot) {
-	m.state.ReplaceDocument(snapshot.doc)
-	m.doc = m.state.Document()
-	m.manualResolved = cloneManualResolved(snapshot.manualResolved)
+	m.state = snapshot.state.Clone()
+	m.refreshResolverCaches()
 }
 
 func (m *model) pushResolverUndo(snapshot resolverSnapshot) {
