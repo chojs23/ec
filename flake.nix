@@ -58,25 +58,10 @@
           pkgs = nixpkgs.legacyPackages.${system};
         in
         rec {
-          ec = pkgs.buildGoModule {
-            pname = "ec";
+          ec = pkgs.callPackage ./nix/package.nix {
             inherit version;
             src = ./.;
             vendorHash = "sha256-bV5y8zKculYULkFl9J95qebLOzdTT/LuYycqMmHKZ+g=";
-            subPackages = [ "cmd/ec" ];
-            ldflags = [
-              "-s"
-              "-w"
-              "-X main.version=${version}"
-            ];
-
-            meta = {
-              description = "Terminal-native 3-way git mergetool vim-like workflow";
-              homepage = "https://github.com/chojs23/ec";
-              license = pkgs.lib.licenses.mit;
-              mainProgram = "ec";
-              platforms = pkgs.lib.platforms.unix;
-            };
           };
 
           default = ec;
