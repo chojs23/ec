@@ -32,17 +32,26 @@ brew install chojs23/tap/ec
 
 ### Nix
 
-Run without installing:
+Install the packaged release from nixpkgs:
+
+```bash
+nix profile add nixpkgs#ec
+```
+
+Run the latest repo state without installing:
 
 ```bash
 nix run github:chojs23/ec
 ```
 
-Install into your profile:
+Install the latest repo state into your profile:
 
 ```bash
 nix profile add github:chojs23/ec
 ```
+
+The nixpkgs package can lag behind the latest upstream release. Use the direct
+repo commands above if you want the newest branch or tag immediately.
 
 ### Install script
 
