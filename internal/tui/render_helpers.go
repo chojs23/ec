@@ -45,6 +45,13 @@ func splitLines(content []byte) []string {
 	return lines
 }
 
+func splitLogicalLines(content []byte) []string {
+	if len(content) == 0 {
+		return nil
+	}
+	return splitLines(content)
+}
+
 func renderLines(
 	lines []lineInfo,
 	numberStyle lipgloss.Style,
@@ -249,6 +256,7 @@ func buildPaneLinesFromEntries(doc markers.Document, side paneSide, highlightCon
 	baseStart := selectedRange.baseStart
 	baseEnd := selectedRange.baseEnd
 	sideStart, sideEnd := selectedRange.sideRange(side)
+	emptySideSelection := highlightConflict >= 0 && baseStart == baseEnd && sideStart >= 0 && sideStart == sideEnd
 
 	resolution := conflictResolutionForIndex(doc, highlightConflict, selectedSide)
 	connector := ""
@@ -287,6 +295,13 @@ func buildPaneLinesFromEntries(doc markers.Document, side paneSide, highlightCon
 	}
 
 	for _, entry := range entries {
+		if emptySideSelection && !selectedFound && entry.category != categoryRemoved && sideLineIndex == sideStart {
+			selectedFound = true
+			currentStart = len(lines)
+			addStartMarker()
+			addEndMarker()
+		}
+
 		selected := false
 		if highlightConflict >= 0 {
 			if entry.category == categoryRemoved {
@@ -333,6 +348,13 @@ func buildPaneLinesFromEntries(doc markers.Document, side paneSide, highlightCon
 		lastSelected = selected
 	}
 
+	if emptySideSelection && !selectedFound && sideLineIndex == sideStart {
+		selectedFound = true
+		currentStart = len(lines)
+		addStartMarker()
+		addEndMarker()
+	}
+
 	if lastSelected {
 		addEndMarker()
 	}
@@ -368,69 +390,71 @@ func computeConflictRanges(doc markers.Document, baseLines []string, oursLines [
 	oursPos := 0
 	theirsPos := 0
 
-	for _, ref := range doc.Conflicts {
-		seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
-		if !ok {
+	for _, seg := range doc.Segments {
+		switch s := seg.(type) {
+		case markers.TextSegment:
+			textLines := splitLogicalLines(s.Bytes)
+			if !matchLinesAt(baseLines, textLines, basePos) || !matchLinesAt(oursLines, textLines, oursPos) || !matchLinesAt(theirsLines, textLines, theirsPos) {
+				return nil, false
+			}
+			basePos += len(textLines)
+			oursPos += len(textLines)
+			theirsPos += len(textLines)
+		case markers.ConflictSegment:
+			baseSeq := splitLogicalLines(s.Base)
+			oursSeq := splitLogicalLines(s.Ours)
+			theirsSeq := splitLogicalLines(s.Theirs)
+
+			if !matchLinesAt(baseLines, baseSeq, basePos) || !matchLinesAt(oursLines, oursSeq, oursPos) || !matchLinesAt(theirsLines, theirsSeq, theirsPos) {
+				return nil, false
+			}
+
+			ranges = append(ranges, conflictRange{
+				baseStart:   basePos,
+				baseEnd:     basePos + len(baseSeq),
+				oursStart:   oursPos,
+				oursEnd:     oursPos + len(oursSeq),
+				theirsStart: theirsPos,
+				theirsEnd:   theirsPos + len(theirsSeq),
+			})
+
+			basePos += len(baseSeq)
+			oursPos += len(oursSeq)
+			theirsPos += len(theirsSeq)
+		default:
 			return nil, false
 		}
+	}
 
-		baseSeq := splitLines(seg.Base)
-		oursSeq := splitLines(seg.Ours)
-		theirsSeq := splitLines(seg.Theirs)
+	if len(ranges) != len(doc.Conflicts) {
+		return nil, false
+	}
 
-		baseStart, baseEnd, okBase := findSequence(baseLines, baseSeq, basePos)
-		oursStart, oursEnd, okOurs := findSequence(oursLines, oursSeq, oursPos)
-		theirsStart, theirsEnd, okTheirs := findSequence(theirsLines, theirsSeq, theirsPos)
-		if !okBase || !okOurs || !okTheirs {
-			return nil, false
-		}
-
-		ranges = append(ranges, conflictRange{
-			baseStart:   baseStart,
-			baseEnd:     baseEnd,
-			oursStart:   oursStart,
-			oursEnd:     oursEnd,
-			theirsStart: theirsStart,
-			theirsEnd:   theirsEnd,
-		})
-
-		basePos = baseEnd
-		oursPos = oursEnd
-		theirsPos = theirsEnd
+	if basePos != len(baseLines) || oursPos != len(oursLines) || theirsPos != len(theirsLines) {
+		return nil, false
 	}
 
 	return ranges, true
 }
 
-func findSequence(lines []string, seq []string, start int) (int, int, bool) {
-	if start < 0 {
-		start = 0
+func matchLinesAt(lines []string, seq []string, start int) bool {
+	if start < 0 || start > len(lines) {
+		return false
 	}
 	if len(seq) == 0 {
-		return start, start, true
+		return true
 	}
-	if len(lines) == 0 {
-		return -1, -1, false
-	}
-	if len(seq) > len(lines) {
-		return -1, -1, false
+	if start+len(seq) > len(lines) {
+		return false
 	}
 
-	limit := len(lines) - len(seq)
-	for i := start; i <= limit; i++ {
-		match := true
-		for j, line := range seq {
-			if lines[i+j] != line {
-				match = false
-				break
-			}
-		}
-		if match {
-			return i, i + len(seq), true
+	for i, line := range seq {
+		if lines[start+i] != line {
+			return false
 		}
 	}
 
-	return -1, -1, false
+	return true
 }
 
 func buildResultLines(doc markers.Document, highlightConflict int, selectedSide selectionSide, manualResolved map[int][]byte, boundaryText [][]byte) ([]lineInfo, int) {
