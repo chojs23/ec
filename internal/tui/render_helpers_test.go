@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/chojs23/ec/internal/markers"
@@ -191,6 +192,203 @@ func TestBuildPaneLinesFromEntriesUsesSideRangeForNonRemoved(t *testing.T) {
 	}
 	if lines[1].selected {
 		t.Fatalf("blank line near top should not be selected")
+	}
+}
+
+func TestComputeConflictRangesTracksEmptySideInsertionPoint(t *testing.T) {
+	tests := []struct {
+		name        string
+		input       []byte
+		baseLines   []string
+		oursLines   []string
+		theirsLines []string
+		want        conflictRange
+	}{
+		{
+			name:        "empty ours",
+			input:       []byte("alpha\n<<<<<<< HEAD\n=======\ntheirs\n>>>>>>> branch\nomega\n\nblank\n"),
+			baseLines:   []string{"alpha", "omega", "", "blank"},
+			oursLines:   []string{"alpha", "omega", "", "blank"},
+			theirsLines: []string{"alpha", "theirs", "omega", "", "blank"},
+			want:        conflictRange{baseStart: 1, baseEnd: 1, oursStart: 1, oursEnd: 1, theirsStart: 1, theirsEnd: 2},
+		},
+		{
+			name:        "empty theirs",
+			input:       []byte("alpha\n<<<<<<< HEAD\nours\n=======\n>>>>>>> branch\nomega\n\nblank\n"),
+			baseLines:   []string{"alpha", "omega", "", "blank"},
+			oursLines:   []string{"alpha", "ours", "omega", "", "blank"},
+			theirsLines: []string{"alpha", "omega", "", "blank"},
+			want:        conflictRange{baseStart: 1, baseEnd: 1, oursStart: 1, oursEnd: 2, theirsStart: 1, theirsEnd: 1},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc, err := markers.Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse error: %v", err)
+			}
+
+			ranges, ok := computeConflictRanges(doc, tt.baseLines, tt.oursLines, tt.theirsLines)
+			if !ok {
+				t.Fatalf("computeConflictRanges failed")
+			}
+			if len(ranges) != 1 {
+				t.Fatalf("ranges len = %d, want 1", len(ranges))
+			}
+
+			if got := ranges[0]; got != tt.want {
+				t.Fatalf("range = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestBuildPaneLinesFromEntriesAnchorsEmptySideAtInsertionPoint(t *testing.T) {
+	tests := []struct {
+		name                 string
+		selectedPane         paneSide
+		selectedSide         selectionSide
+		segments             []markers.Segment
+		conflictSegmentIndex int
+		entries              []lineEntry
+		rangeForConflict     conflictRange
+		wantStart            int
+		wantLineCount        int
+		wantMarkerIndex      int
+	}{
+		{
+			name:         "empty ours in middle",
+			selectedPane: paneOurs,
+			selectedSide: selectedOurs,
+			segments: []markers.Segment{
+				markers.TextSegment{Bytes: []byte("alpha\n")},
+				markers.ConflictSegment{Ours: nil, Theirs: []byte("theirs\n")},
+				markers.TextSegment{Bytes: []byte("omega\n")},
+			},
+			conflictSegmentIndex: 1,
+			entries:              []lineEntry{{text: "alpha", category: categoryDefault, baseIndex: 0}, {text: "omega", category: categoryDefault, baseIndex: 1}},
+			rangeForConflict:     conflictRange{baseStart: 1, baseEnd: 1, oursStart: 1, oursEnd: 1, theirsStart: 1, theirsEnd: 2},
+			wantStart:            1,
+			wantLineCount:        4,
+			wantMarkerIndex:      1,
+		},
+		{
+			name:         "empty ours at bof",
+			selectedPane: paneOurs,
+			selectedSide: selectedOurs,
+			segments: []markers.Segment{
+				markers.ConflictSegment{Ours: nil, Theirs: []byte("theirs\n")},
+				markers.TextSegment{Bytes: []byte("tail\n")},
+			},
+			conflictSegmentIndex: 0,
+			entries:              []lineEntry{{text: "tail", category: categoryDefault, baseIndex: 0}},
+			rangeForConflict:     conflictRange{baseStart: 0, baseEnd: 0, oursStart: 0, oursEnd: 0, theirsStart: 0, theirsEnd: 1},
+			wantStart:            0,
+			wantLineCount:        3,
+			wantMarkerIndex:      0,
+		},
+		{
+			name:         "empty ours at eof",
+			selectedPane: paneOurs,
+			selectedSide: selectedOurs,
+			segments: []markers.Segment{
+				markers.TextSegment{Bytes: []byte("head\n")},
+				markers.ConflictSegment{Ours: nil, Theirs: []byte("theirs\n")},
+			},
+			conflictSegmentIndex: 1,
+			entries:              []lineEntry{{text: "head", category: categoryDefault, baseIndex: 0}},
+			rangeForConflict:     conflictRange{baseStart: 1, baseEnd: 1, oursStart: 1, oursEnd: 1, theirsStart: 1, theirsEnd: 2},
+			wantStart:            1,
+			wantLineCount:        3,
+			wantMarkerIndex:      1,
+		},
+		{
+			name:         "empty theirs in middle",
+			selectedPane: paneTheirs,
+			selectedSide: selectedTheirs,
+			segments: []markers.Segment{
+				markers.TextSegment{Bytes: []byte("alpha\n")},
+				markers.ConflictSegment{Ours: []byte("ours\n"), Theirs: nil},
+				markers.TextSegment{Bytes: []byte("omega\n")},
+			},
+			conflictSegmentIndex: 1,
+			entries:              []lineEntry{{text: "alpha", category: categoryDefault, baseIndex: 0}, {text: "omega", category: categoryDefault, baseIndex: 1}},
+			rangeForConflict:     conflictRange{baseStart: 1, baseEnd: 1, oursStart: 1, oursEnd: 2, theirsStart: 1, theirsEnd: 1},
+			wantStart:            1,
+			wantLineCount:        4,
+			wantMarkerIndex:      1,
+		},
+		{
+			name:         "empty theirs at bof",
+			selectedPane: paneTheirs,
+			selectedSide: selectedTheirs,
+			segments: []markers.Segment{
+				markers.ConflictSegment{Ours: []byte("ours\n"), Theirs: nil},
+				markers.TextSegment{Bytes: []byte("tail\n")},
+			},
+			conflictSegmentIndex: 0,
+			entries:              []lineEntry{{text: "tail", category: categoryDefault, baseIndex: 0}},
+			rangeForConflict:     conflictRange{baseStart: 0, baseEnd: 0, oursStart: 0, oursEnd: 1, theirsStart: 0, theirsEnd: 0},
+			wantStart:            0,
+			wantLineCount:        3,
+			wantMarkerIndex:      0,
+		},
+		{
+			name:         "empty theirs at eof",
+			selectedPane: paneTheirs,
+			selectedSide: selectedTheirs,
+			segments: []markers.Segment{
+				markers.TextSegment{Bytes: []byte("head\n")},
+				markers.ConflictSegment{Ours: []byte("ours\n"), Theirs: nil},
+			},
+			conflictSegmentIndex: 1,
+			entries:              []lineEntry{{text: "head", category: categoryDefault, baseIndex: 0}},
+			rangeForConflict:     conflictRange{baseStart: 1, baseEnd: 1, oursStart: 1, oursEnd: 2, theirsStart: 1, theirsEnd: 1},
+			wantStart:            1,
+			wantLineCount:        3,
+			wantMarkerIndex:      1,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			doc := markers.Document{
+				Segments:  tt.segments,
+				Conflicts: []markers.ConflictRef{{SegmentIndex: tt.conflictSegmentIndex}},
+			}
+
+			lines, start := buildPaneLinesFromEntries(doc, tt.selectedPane, 0, tt.selectedSide, tt.entries, []conflictRange{tt.rangeForConflict})
+			if start != tt.wantStart {
+				t.Fatalf("start = %d, want %d", start, tt.wantStart)
+			}
+			if len(lines) != tt.wantLineCount {
+				t.Fatalf("lines len = %d, want %d", len(lines), tt.wantLineCount)
+			}
+
+			startMarker := fmt.Sprintf(">> selected hunk start (%s) >>", sideLabel(tt.selectedPane))
+			if lines[tt.wantMarkerIndex].text != startMarker {
+				t.Fatalf("lines[%d].text = %q, want %q", tt.wantMarkerIndex, lines[tt.wantMarkerIndex].text, startMarker)
+			}
+			if !lines[tt.wantMarkerIndex].selected {
+				t.Fatalf("start marker should be selected: %+v", lines[tt.wantMarkerIndex])
+			}
+			if lines[tt.wantMarkerIndex+1].text != ">> selected hunk end >>" {
+				t.Fatalf("lines[%d].text = %q", tt.wantMarkerIndex+1, lines[tt.wantMarkerIndex+1].text)
+			}
+			if !lines[tt.wantMarkerIndex+1].selected {
+				t.Fatalf("end marker should be selected: %+v", lines[tt.wantMarkerIndex+1])
+			}
+
+			for i, line := range lines {
+				if i == tt.wantMarkerIndex || i == tt.wantMarkerIndex+1 {
+					continue
+				}
+				if line.selected {
+					t.Fatalf("non-marker line %d should not be selected: %+v", i, line)
+				}
+			}
+		})
 	}
 }
 
