@@ -35,11 +35,24 @@ func loadResolverDocumentState(ctx context.Context, opts cli.Options) (resolverD
 	if err != nil {
 		return state, nil
 	}
+	if len(mergedBytes) == 0 && canonicalDocHasText(canonicalDoc) {
+		return state, nil
+	}
 
 	if err := runtimeState.ImportMerged(mergedBytes); err != nil {
 		return resolverDocumentState{}, err
 	}
 	return buildResolverDocumentState(runtimeState), nil
+}
+
+func canonicalDocHasText(doc markers.Document) bool {
+	for _, seg := range doc.Segments {
+		text, ok := seg.(markers.TextSegment)
+		if ok && len(text.Bytes) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func buildResolverDocumentState(state *engine.State) resolverDocumentState {

@@ -378,6 +378,149 @@ func TestLoadResolverDocumentStateKeepsCanonicalConflictStructureWithMergedMarke
 	}
 }
 
+func TestLoadResolverDocumentStateSkipsEmptyMergedFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "left.txt")
+	remotePath := filepath.Join(tmpDir, "right.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	for path, content := range map[string][]byte{
+		basePath:   []byte("line1\nline2\n"),
+		localPath:  []byte("line1\nline2\nleft line\n"),
+		remotePath: []byte("line1\nline2\nright line\n"),
+		mergedPath: nil,
+	} {
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatalf("WriteFile %s error = %v", filepath.Base(path), err)
+		}
+	}
+
+	opts := cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	}
+
+	resolverState, err := loadResolverDocumentState(ctx, opts)
+	if err != nil {
+		t.Fatalf("loadResolverDocumentState error = %v", err)
+	}
+	if len(resolverState.doc.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1", len(resolverState.doc.Conflicts))
+	}
+
+	got := string(resolverState.state.RenderMerged())
+	if !strings.Contains(got, "line1\nline2\n") {
+		t.Fatalf("RenderMerged missing canonical context:\n%s", got)
+	}
+	if !strings.Contains(got, "<<<<<<<") {
+		t.Fatalf("RenderMerged should still contain unresolved markers:\n%s", got)
+	}
+}
+
+func TestBothKeepsContextWithEmptyMergedFile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "left.txt")
+	remotePath := filepath.Join(tmpDir, "right.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	for path, content := range map[string][]byte{
+		basePath:   []byte("line1\nline2\n"),
+		localPath:  []byte("line1\nline2\nleft line\n"),
+		remotePath: []byte("line1\nline2\nright line\n"),
+		mergedPath: nil,
+	} {
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatalf("WriteFile %s error = %v", filepath.Base(path), err)
+		}
+	}
+
+	opts := cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	}
+
+	resolverState, err := loadResolverDocumentState(ctx, opts)
+	if err != nil {
+		t.Fatalf("loadResolverDocumentState error = %v", err)
+	}
+	if err := resolverState.state.ApplyResolution(0, markers.ResolutionBoth); err != nil {
+		t.Fatalf("ApplyResolution error = %v", err)
+	}
+
+	got := string(resolverState.state.RenderMerged())
+	want := "line1\nline2\nleft line\nright line\n"
+	if got != want {
+		t.Fatalf("RenderMerged = %q, want %q", got, want)
+	}
+}
+
+func TestLoadResolverDocumentStateKeepsEmptyResolvedConflict(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "left.txt")
+	remotePath := filepath.Join(tmpDir, "right.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	for path, content := range map[string][]byte{
+		basePath:   nil,
+		localPath:  []byte("left line\n"),
+		remotePath: []byte("right line\n"),
+		mergedPath: nil,
+	} {
+		if err := os.WriteFile(path, content, 0o644); err != nil {
+			t.Fatalf("WriteFile %s error = %v", filepath.Base(path), err)
+		}
+	}
+
+	opts := cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	}
+
+	resolverState, err := loadResolverDocumentState(ctx, opts)
+	if err != nil {
+		t.Fatalf("loadResolverDocumentState error = %v", err)
+	}
+	if resolverState.state.HasUnresolvedConflicts() {
+		t.Fatal("expected empty merged file to remain a valid empty resolution")
+	}
+	if got := string(resolverState.state.RenderMerged()); got != "" {
+		t.Fatalf("RenderMerged = %q, want empty string", got)
+	}
+}
+
 func TestLoadResolverDocumentStateFallsBackForMixedResolvedMergedFile(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration-style test in short mode")
