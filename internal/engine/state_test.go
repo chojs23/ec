@@ -484,6 +484,48 @@ func TestImportMergedPreservesTextBetweenAdjacentConflictsAfterResolve(t *testin
 	}
 }
 
+func TestImportMergedPreservesCanonicalBaseLabelForTwoWayConflict(t *testing.T) {
+	input := []byte("intro\n<<<<<<< HEAD\nours line\n||||||| base-commit\n=======\ntheirs line\n>>>>>>> feature\noutro\n")
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	state, err := NewState(doc)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+	merged := []byte("intro\n<<<<<<< ours-label\nours line\n=======\ntheirs line\n>>>>>>> theirs-label\noutro\n")
+	if err := state.ImportMerged(merged); err != nil {
+		t.Fatalf("ImportMerged failed: %v", err)
+	}
+
+	updated := state.Document()
+	seg, ok := updated.Segments[updated.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
+	if !ok {
+		t.Fatalf("segment is %T, want ConflictSegment", updated.Segments[updated.Conflicts[0].SegmentIndex])
+	}
+	if len(seg.Base) != 0 {
+		t.Fatalf("Base = %q, want empty", string(seg.Base))
+	}
+	if seg.BaseLabel != "base-commit" {
+		t.Fatalf("BaseLabel = %q, want %q", seg.BaseLabel, "base-commit")
+	}
+	if err := ValidateBaseCompleteness(updated); err != nil {
+		t.Fatalf("ValidateBaseCompleteness failed: %v", err)
+	}
+
+	labels, known := state.MergedLabels()
+	if !known[0] {
+		t.Fatalf("MergedLabels known = false, want true")
+	}
+	if labels[0].OursLabel != "ours-label" || labels[0].TheirsLabel != "theirs-label" {
+		t.Fatalf("MergedLabels = %+v", labels[0])
+	}
+	if labels[0].BaseLabel != "base-commit" {
+		t.Fatalf("MergedLabels BaseLabel = %q, want %q", labels[0].BaseLabel, "base-commit")
+	}
+}
+
 func TestImportMergedRejectsReorderedSeparatedConflicts(t *testing.T) {
 	input := []byte("<<<<<<< left-one\nours1\n=======\ntheirs1\n>>>>>>> right-one\n<<<<<<< left-two\nours2\n=======\ntheirs2\n>>>>>>> right-two\n")
 	doc, err := markers.Parse(input)

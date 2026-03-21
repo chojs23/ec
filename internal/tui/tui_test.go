@@ -845,6 +845,67 @@ func TestReloadFromFileKeepsExistingUndoHistory(t *testing.T) {
 	}
 }
 
+func TestReloadFromFileAllowsTwoWayMergedConflictWhenCanonicalBaseLabelExists(t *testing.T) {
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	if err := os.WriteFile(basePath, []byte("intro\noutro\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte("intro\nours line\noutro\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remotePath, []byte("intro\ntheirs line\noutro\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mergedContent := "intro\n<<<<<<< ours-label\nours line\n=======\ntheirs line\n>>>>>>> theirs-label\noutro\n"
+	if err := os.WriteFile(mergedPath, []byte(mergedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	diff3Bytes, err := gitmerge.MergeFileDiff3(ctx, localPath, basePath, remotePath)
+	if err != nil {
+		t.Fatalf("MergeFileDiff3 failed: %v", err)
+	}
+	doc, err := markers.Parse(diff3Bytes)
+	if err != nil {
+		t.Fatalf("Parse error = %v", err)
+	}
+	state, err := engine.NewState(doc)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+
+	m := model{
+		ctx:   ctx,
+		opts:  cli.Options{BasePath: basePath, LocalPath: localPath, RemotePath: remotePath, MergedPath: mergedPath},
+		state: state,
+		doc:   doc,
+	}
+
+	if err := m.reloadFromFile(); err != nil {
+		t.Fatalf("reloadFromFile error = %v", err)
+	}
+	seg := conflictSegment(t, m.doc, 0)
+	if len(seg.Base) != 0 {
+		t.Fatalf("seg.Base = %q, want empty", string(seg.Base))
+	}
+	if seg.BaseLabel == "" {
+		t.Fatal("seg.BaseLabel = empty, want preserved canonical base label")
+	}
+	if !m.mergedLabelKnown[0] {
+		t.Fatalf("mergedLabelKnown[0] = false, want true")
+	}
+	if m.mergedLabels[0].OursLabel != "ours-label" || m.mergedLabels[0].TheirsLabel != "theirs-label" {
+		t.Fatalf("mergedLabels[0] = %+v", m.mergedLabels[0])
+	}
+}
+
 func TestModelInitReturnsNil(t *testing.T) {
 	if cmd := (model{}).Init(); cmd != nil {
 		t.Fatalf("Init() = %v, want nil", cmd)
