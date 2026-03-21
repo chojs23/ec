@@ -412,6 +412,7 @@ func shouldAllowMissingBaseFallback(ctx context.Context, opts cli.Options, valid
 	if validationErr == nil || !strings.Contains(validationErr.Error(), "missing base chunk") {
 		return false
 	}
+
 	if !isTrulyMissingBasePath(opts.BasePath) {
 		return false
 	}

@@ -433,6 +433,9 @@ func (c *conflictState) applyClassification(resolution markers.Resolution, unres
 	c.manual = manual
 	c.labelKnown = known
 	if known {
+		if labels.BaseLabel == "" {
+			labels.BaseLabel = c.canonical.BaseLabel
+		}
 		c.labels = labels
 	} else {
 		c.labels = ConflictLabels{
