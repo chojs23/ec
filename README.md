@@ -135,6 +135,15 @@ git config --global mergetool.ec.cmd 'ec "$BASE" "$LOCAL" "$REMOTE" "$MERGED"'
 git config --global mergetool.ec.trustExitCode true
 ```
 
+## Jujutsu merge-editor configuration
+
+You can set ec as your jujutsu merge-editor by adding this to your jujutsu config
+
+```
+jj config set --user ui.merge-editor 'ec'
+jj config set --user merge-tools.ec.merge-args '["$base", "$left", "$right", "$output"]'
+```
+
 ## Usage
 
 Interactive
