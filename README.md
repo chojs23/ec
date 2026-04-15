@@ -4,7 +4,7 @@ Terminal Git mergetool with a 3-way TUI and Neovim integration
 
 [![codecov](https://codecov.io/gh/chojs23/ec/graph/badge.svg?token=AX5BFUF8YN)](https://codecov.io/gh/chojs23/ec)
 
-<img width="1613" height="848" alt="ec 3-way terminal git mergetool" src="https://github.com/user-attachments/assets/f6903327-15c6-4fc0-9427-5bd820ba02ec" />
+<img alt="ec 3-way terminal git mergetool" src="https://github.com/user-attachments/assets/f6903327-15c6-4fc0-9427-5bd820ba02ec" />
 
 ![ec demo resolving git merge conflicts in terminal](https://github.com/user-attachments/assets/7c3eba19-d72b-499b-b2e8-3e16f645407e)
 
