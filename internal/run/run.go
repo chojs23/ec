@@ -72,8 +72,3 @@ func Run(ctx context.Context, opts cli.Options) int {
 	}
 	return 0
 }
-
-func exitNotImplemented(err error) int {
-	fmt.Fprintln(os.Stderr, err)
-	return 2
-}

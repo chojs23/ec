@@ -1005,21 +1005,3 @@ func sideLabel(side paneSide) string {
 	}
 	return "ours"
 }
-
-func resultLabel(resolution markers.Resolution, preview bool) string {
-	label := "selection"
-	switch resolution {
-	case markers.ResolutionOurs:
-		label = "ours"
-	case markers.ResolutionTheirs:
-		label = "theirs"
-	case markers.ResolutionBoth:
-		label = "both"
-	case markers.ResolutionNone:
-		label = "none"
-	}
-	if preview {
-		return "selected " + label
-	}
-	return label
-}

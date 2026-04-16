@@ -1709,7 +1709,7 @@ func TestShouldAllowMissingBaseFallback(t *testing.T) {
 		t.Fatalf("WriteFile error = %v", err)
 	}
 
-	errMissingBase := errors.New("conflict 0 is missing base chunk (base display strategy requires exact base for all conflicts)")
+	errMissingBase := errors.New("conflict 0 is missing base chunk (base completeness requires exact base for all conflicts)")
 	if !shouldAllowMissingBaseFallback(context.Background(), cli.Options{BasePath: emptyPath}, errMissingBase) {
 		t.Fatalf("expected missing-base validation error with empty base file to allow fallback")
 	}

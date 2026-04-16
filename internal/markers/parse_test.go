@@ -239,25 +239,3 @@ func TestParseNoTrailingNewline(t *testing.T) {
 		t.Fatalf("expected 1 conflict, got %d", len(doc.Conflicts))
 	}
 }
-
-func TestIsResolved(t *testing.T) {
-	tests := []struct {
-		name     string
-		input    string
-		resolved bool
-	}{
-		{"no_conflict", "hello\nworld\n", true},
-		{"has_conflict", "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n", false},
-		{"false_positive", "comment <<<<<<< not a conflict\n", true},
-		{"malformed", "<<<<<<< HEAD\nno end marker\n", false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := IsResolved([]byte(tt.input))
-			if result != tt.resolved {
-				t.Errorf("IsResolved(%q) = %v, want %v", tt.name, result, tt.resolved)
-			}
-		})
-	}
-}

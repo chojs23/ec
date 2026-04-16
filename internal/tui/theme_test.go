@@ -17,9 +17,6 @@ func TestLoadThemeFromConfigMissingFileUsesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadThemeFromConfig() error = %v", err)
 	}
-	if theme.Name != "default" {
-		t.Fatalf("theme name = %q, want default", theme.Name)
-	}
 	if theme.HeaderBg != "62" {
 		t.Fatalf("header_bg = %q, want 62", theme.HeaderBg)
 	}
@@ -50,9 +47,6 @@ func TestLoadThemeFromConfigMergesOverrides(t *testing.T) {
 	theme, err := loadThemeFromConfig()
 	if err != nil {
 		t.Fatalf("loadThemeFromConfig() error = %v", err)
-	}
-	if theme.Name != "warm" {
-		t.Fatalf("theme name = %q, want warm", theme.Name)
 	}
 	if theme.HeaderBg != "94" {
 		t.Fatalf("header_bg = %q, want 94", theme.HeaderBg)

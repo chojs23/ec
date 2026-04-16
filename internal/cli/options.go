@@ -14,8 +14,7 @@ type Options struct {
 	ApplyAll string // ours|theirs|both
 	Check    bool
 
-	Backup  bool
-	Verbose bool
+	Backup bool
 
 	AllowMissingBase bool
 }

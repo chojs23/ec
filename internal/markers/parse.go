@@ -123,16 +123,3 @@ func parseLabel(line []byte, prefix []byte) string {
 	text := strings.TrimSpace(string(line[len(prefix):]))
 	return text
 }
-
-// IsResolved returns true if the data contains no conflict markers.
-//
-// It checks for the presence of valid conflict marker sequences.
-// False positives (lines starting with <<<<<<< but not followed by a valid
-// conflict structure) are NOT considered conflicts.
-func IsResolved(data []byte) bool {
-	doc, err := Parse(data)
-	if err != nil {
-		return false
-	}
-	return len(doc.Conflicts) == 0
-}
