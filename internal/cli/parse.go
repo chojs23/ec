@@ -29,7 +29,6 @@ func Parse(args []string) (Options, error) {
 	fs.StringVar(&opts.ApplyAll, "apply-all", "", "Non-interactive resolution: ours|theirs|both")
 	fs.BoolVar(&opts.Check, "check", false, "Exit 0 if resolved (no conflict markers), else 1")
 	fs.BoolVar(&backup, "backup", false, "Create $MERGED.ec.bak on write")
-	fs.BoolVar(&opts.Verbose, "v", false, "Verbose logging to stderr")
 	fs.BoolVar(&help, "help", false, "Show help")
 	fs.BoolVar(&help, "h", false, "Show help")
 	fs.BoolVar(&showVersion, "version", false, "Show version")
@@ -109,6 +108,5 @@ No-args mode:
 Options:
 	  --backup                    Create $MERGED.ec.bak
 	  --version                   Show version
-	  -v                          Verbose logging
 `)
 }

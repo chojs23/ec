@@ -534,22 +534,3 @@ func TestEntriesFromLines(t *testing.T) {
 		t.Fatalf("entry 1 text = %q, want b", entries[1].text)
 	}
 }
-
-func TestResultLabel(t *testing.T) {
-	cases := []struct {
-		resolution markers.Resolution
-		preview    bool
-		want       string
-	}{
-		{markers.ResolutionOurs, false, "ours"},
-		{markers.ResolutionTheirs, false, "theirs"},
-		{markers.ResolutionBoth, false, "both"},
-		{markers.ResolutionNone, false, "none"},
-		{markers.ResolutionOurs, true, "selected ours"},
-	}
-	for _, tc := range cases {
-		if got := resultLabel(tc.resolution, tc.preview); got != tc.want {
-			t.Fatalf("resultLabel(%q, preview=%v) = %q, want %q", tc.resolution, tc.preview, got, tc.want)
-		}
-	}
-}

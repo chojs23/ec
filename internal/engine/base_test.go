@@ -192,38 +192,6 @@ func TestBaseDisplayIntegration_RealGitConflict(t *testing.T) {
 	}
 }
 
-// TestOpenBaseFile_WithPager tests that OpenBaseFile uses $PAGER when set.
-func TestOpenBaseFile_WithPager(t *testing.T) {
-	tmpDir := t.TempDir()
-	baseFile := filepath.Join(tmpDir, "base.txt")
-	if err := os.WriteFile(baseFile, []byte("base content\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	testScript := filepath.Join(tmpDir, "test-pager.sh")
-	if err := os.WriteFile(testScript, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	originalPager := os.Getenv("PAGER")
-	defer os.Setenv("PAGER", originalPager)
-
-	os.Setenv("PAGER", testScript)
-
-	err := OpenBaseFile(baseFile)
-	if err != nil {
-		t.Errorf("OpenBaseFile failed: %v", err)
-	}
-}
-
-// TestOpenBaseFile_MissingFile tests that OpenBaseFile returns error for non-existent file.
-func TestOpenBaseFile_MissingFile(t *testing.T) {
-	err := OpenBaseFile("/nonexistent/path/file.txt")
-	if err == nil {
-		t.Fatal("expected error for missing file, got nil")
-	}
-}
-
 func contains(s, substr string) bool {
 	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
 		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||

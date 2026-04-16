@@ -20,8 +20,6 @@ type ThemeConfig struct {
 }
 
 type Theme struct {
-	Name string `json:"-"`
-
 	TitleFg                string `json:"title_fg"`
 	PaneBorder             string `json:"pane_border"`
 	SelectedPaneBorder     string `json:"selected_pane_border"`
@@ -115,7 +113,6 @@ func loadThemeFromConfig() (Theme, error) {
 	if !ok {
 		return Theme{}, fmt.Errorf("theme %q not found in %s", themeName, configPath)
 	}
-	theme.Name = themeName
 	return mergeTheme(fallback, theme), nil
 }
 
@@ -137,7 +134,6 @@ func themeConfigPath() (string, error) {
 
 func defaultTheme() Theme {
 	return Theme{
-		Name:                   "default",
 		TitleFg:                "170",
 		PaneBorder:             "63",
 		SelectedPaneBorder:     "205",
@@ -184,7 +180,6 @@ func defaultTheme() Theme {
 
 func mergeTheme(base Theme, override Theme) Theme {
 	return Theme{
-		Name:                   override.Name,
 		TitleFg:                pickColor(base.TitleFg, override.TitleFg),
 		PaneBorder:             pickColor(base.PaneBorder, override.PaneBorder),
 		SelectedPaneBorder:     pickColor(base.SelectedPaneBorder, override.SelectedPaneBorder),
