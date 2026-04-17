@@ -1,0 +1,49 @@
+{
+  "name": "@chojs23/ec",
+  "version": "0.3.1",
+  "description": "Terminal Git mergetool with a 3-way TUI and Neovim integration",
+  "bin": {
+    "ec": "bin/ec.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "files": [
+    "bin/",
+    "install.js",
+    "README.md",
+    "LICENSE"
+  ],
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/chojs23/ec.git"
+  },
+  "homepage": "https://github.com/chojs23/ec",
+  "bugs": {
+    "url": "https://github.com/chojs23/ec/issues"
+  },
+  "keywords": [
+    "git",
+    "merge",
+    "mergetool",
+    "conflict",
+    "tui",
+    "neovim"
+  ],
+  "license": "MIT"
+}

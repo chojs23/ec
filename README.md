@@ -30,6 +30,22 @@ ec (easy-conflict) is a 3-way terminal native Git merge conflict resolver. Suppo
 brew install chojs23/tap/ec
 ```
 
+### Npm
+
+```bash
+npm install -g @chojs23/ec
+```
+
+Or run without installing:
+
+```bash
+npx @chojs23/ec
+```
+
+The npm package is a thin installer that downloads the matching prebuilt
+binary from GitHub Releases at install time. Set `EC_SKIP_DOWNLOAD=1` to
+skip the postinstall download in restricted environments.
+
 ### Nix
 
 Install the packaged release from nixpkgs:

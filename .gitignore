@@ -1,2 +1,5 @@
 /easy-conflict
 /ec
+npm/node_modules/
+npm/vendor/
+npm/*.tgz
