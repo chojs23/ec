@@ -294,7 +294,7 @@ func TestReloadFromFilePreservesManualResolution(t *testing.T) {
 	}
 }
 
-func TestLoadResolverDocumentStateKeepsCanonicalConflictStructureWithMergedMarkers(t *testing.T) {
+func TestLoadResolverDocumentStatePrefersOnDiskConflictBytes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration-style test in short mode")
 	}
@@ -353,14 +353,14 @@ func TestLoadResolverDocumentStateKeepsCanonicalConflictStructureWithMergedMarke
 	}
 
 	seg := conflictSegment(t, state.doc, 0)
-	if string(seg.Ours) != "local line\n" {
-		t.Fatalf("seg.Ours = %q", string(seg.Ours))
+	if string(seg.Ours) != "local from merged\n" {
+		t.Fatalf("seg.Ours = %q, want %q (disk bytes, not stage-2 reconstruction)", string(seg.Ours), "local from merged\n")
 	}
-	if string(seg.Base) != "base line\n" {
-		t.Fatalf("seg.Base = %q", string(seg.Base))
+	if string(seg.Theirs) != "remote from merged\n" {
+		t.Fatalf("seg.Theirs = %q, want %q", string(seg.Theirs), "remote from merged\n")
 	}
-	if string(seg.Theirs) != "remote line\n" {
-		t.Fatalf("seg.Theirs = %q", string(seg.Theirs))
+	if seg.BaseLabel == "" {
+		t.Fatalf("seg.BaseLabel = empty, want non-empty so base-completeness validation passes")
 	}
 	if !state.mergedLabelKnown[0] {
 		t.Fatalf("mergedLabelKnown[0] = false, want true")
@@ -521,7 +521,7 @@ func TestLoadResolverDocumentStateKeepsEmptyResolvedConflict(t *testing.T) {
 	}
 }
 
-func TestLoadResolverDocumentStateFallsBackForMixedResolvedMergedFile(t *testing.T) {
+func TestLoadResolverDocumentStateTreatsInlinePreResolutionAsText(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration-style test in short mode")
 	}
@@ -537,6 +537,12 @@ func TestLoadResolverDocumentStateFallsBackForMixedResolvedMergedFile(t *testing
 	remotePath := filepath.Join(tmpDir, "remote.txt")
 	mergedPath := filepath.Join(tmpDir, "merged.txt")
 
+	// The 3-way inputs would produce two conflict regions. The user has
+	// already resolved the first one inline by deleting its markers. The
+	// canonical document mirrors the on-disk state: only the remaining
+	// unresolved conflict surfaces; the pre-resolved region is collapsed
+	// into surrounding text, just like how `git status` keeps the file
+	// unmerged until every hunk is handled.
 	baseContent := "top\nbase1\nmiddle\nbase2\nbottom\n"
 	localContent := "top\nlocal1\nmiddle\nlocal2\nbottom\n"
 	remoteContent := "top\nremote1\nmiddle\nremote2\nbottom\n"
@@ -564,25 +570,20 @@ func TestLoadResolverDocumentStateFallsBackForMixedResolvedMergedFile(t *testing
 	if err != nil {
 		t.Fatalf("loadResolverDocumentState error = %v", err)
 	}
-	if len(state.doc.Conflicts) != 2 {
-		t.Fatalf("conflicts = %d, want 2", len(state.doc.Conflicts))
-	}
-	first := conflictSegment(t, state.doc, 0)
-	if first.Resolution != markers.ResolutionOurs {
-		t.Fatalf("first resolution = %q, want %q", first.Resolution, markers.ResolutionOurs)
-	}
-	middleText, ok := state.doc.Segments[2].(markers.TextSegment)
-	if !ok {
-		t.Fatalf("segment 2 = %T, want TextSegment", state.doc.Segments[2])
-	}
-	if string(middleText.Bytes) != "middle\n" {
-		t.Fatalf("middle text = %q", string(middleText.Bytes))
-	}
-	second := conflictSegment(t, state.doc, 1)
-	if second.Resolution != markers.ResolutionUnset {
-		t.Fatalf("second resolution = %q, want unset", second.Resolution)
+	if len(state.doc.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1 (inline pre-resolution should not surface as a conflict)", len(state.doc.Conflicts))
 	}
 
+	seg := conflictSegment(t, state.doc, 0)
+	if string(seg.Ours) != "local2\n" {
+		t.Fatalf("seg.Ours = %q, want %q", string(seg.Ours), "local2\n")
+	}
+	if string(seg.Theirs) != "remote2\n" {
+		t.Fatalf("seg.Theirs = %q, want %q", string(seg.Theirs), "remote2\n")
+	}
+	if seg.Resolution != markers.ResolutionUnset {
+		t.Fatalf("resolution = %q, want unset", seg.Resolution)
+	}
 }
 
 func TestInitialLoadRenderUsesModelOwnedMergeState(t *testing.T) {
@@ -667,7 +668,7 @@ func TestInitialLoadRenderUsesModelOwnedMergeState(t *testing.T) {
 	}
 }
 
-func TestReloadFromFileKeepsCanonicalConflictStructureWithMergedMarkers(t *testing.T) {
+func TestReloadFromFilePrefersOnDiskConflictBytes(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping integration-style test in short mode")
 	}
@@ -735,11 +736,11 @@ func TestReloadFromFileKeepsCanonicalConflictStructureWithMergedMarkers(t *testi
 	}
 
 	seg := conflictSegment(t, m.doc, 0)
-	if string(seg.Ours) != "local line\n" {
-		t.Fatalf("seg.Ours = %q", string(seg.Ours))
+	if string(seg.Ours) != "local from merged\n" {
+		t.Fatalf("seg.Ours = %q, want %q (disk bytes, not stage-2 reconstruction)", string(seg.Ours), "local from merged\n")
 	}
-	if string(seg.Theirs) != "remote line\n" {
-		t.Fatalf("seg.Theirs = %q", string(seg.Theirs))
+	if string(seg.Theirs) != "remote from merged\n" {
+		t.Fatalf("seg.Theirs = %q, want %q", string(seg.Theirs), "remote from merged\n")
 	}
 	if !m.mergedLabelKnown[0] {
 		t.Fatalf("mergedLabelKnown[0] = false, want true")
@@ -749,6 +750,91 @@ func TestReloadFromFileKeepsCanonicalConflictStructureWithMergedMarkers(t *testi
 	}
 	if len(m.manualResolved) != 0 {
 		t.Fatalf("manualResolved = %d, want 0", len(m.manualResolved))
+	}
+}
+
+func TestReloadFromFileUpdatesEditedUnresolvedConflictBodies(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping integration-style test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+
+	ctx := context.Background()
+	tmpDir := t.TempDir()
+
+	basePath := filepath.Join(tmpDir, "base.txt")
+	localPath := filepath.Join(tmpDir, "local.txt")
+	remotePath := filepath.Join(tmpDir, "remote.txt")
+	mergedPath := filepath.Join(tmpDir, "merged.txt")
+
+	baseContent := "intro\nbase line\noutro\n"
+	localContent := "intro\nlocal line\noutro\n"
+	remoteContent := "intro\nremote line\noutro\n"
+	initialMergedContent := "intro edited\n<<<<<<< ours-label\nlocal from merged\n=======\nremote from merged\n>>>>>>> theirs-label\noutro edited\n"
+	editedMergedContent := "intro edited\n<<<<<<< ours-label\nlocal after edit\n=======\nremote after edit\n>>>>>>> theirs-label\noutro edited\n"
+
+	if err := os.WriteFile(basePath, []byte(baseContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(localPath, []byte(localContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(remotePath, []byte(remoteContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mergedPath, []byte(initialMergedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	canonicalDoc, err := mergeview.LoadCanonicalDocument(ctx, cli.Options{
+		BasePath:   basePath,
+		LocalPath:  localPath,
+		RemotePath: remotePath,
+		MergedPath: mergedPath,
+	})
+	if err != nil {
+		t.Fatalf("LoadCanonicalDocument error = %v", err)
+	}
+	resolverState, err := engine.NewState(canonicalDoc)
+	if err != nil {
+		t.Fatalf("NewState error = %v", err)
+	}
+
+	m := model{
+		ctx:   ctx,
+		opts:  cli.Options{BasePath: basePath, LocalPath: localPath, RemotePath: remotePath, MergedPath: mergedPath},
+		state: resolverState,
+		doc:   canonicalDoc,
+	}
+
+	if err := os.WriteFile(mergedPath, []byte(editedMergedContent), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.reloadFromFile(); err != nil {
+		t.Fatalf("reloadFromFile error = %v", err)
+	}
+
+	seg := conflictSegment(t, m.doc, 0)
+	if string(seg.Ours) != "local after edit\n" {
+		t.Fatalf("seg.Ours = %q, want %q", string(seg.Ours), "local after edit\n")
+	}
+	if string(seg.Theirs) != "remote after edit\n" {
+		t.Fatalf("seg.Theirs = %q, want %q", string(seg.Theirs), "remote after edit\n")
+	}
+	if got := string(m.state.RenderMerged()); got != editedMergedContent {
+		t.Fatalf("RenderMerged = %q, want %q", got, editedMergedContent)
+	}
+	if len(m.manualResolved) != 0 {
+		t.Fatalf("manualResolved = %d, want 0", len(m.manualResolved))
+	}
+
+	if err := m.state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
+		t.Fatalf("ApplyResolution error = %v", err)
+	}
+	if got := string(m.state.RenderMerged()); got != "intro edited\nlocal after edit\noutro edited\n" {
+		t.Fatalf("RenderMerged after ours = %q, want %q", got, "intro edited\nlocal after edit\noutro edited\n")
 	}
 }
 

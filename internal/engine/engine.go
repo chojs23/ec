@@ -46,7 +46,7 @@ func ApplyAllAndWrite(ctx context.Context, opts cli.Options) error {
 		return nil
 	}
 
-	viewDoc, err := mergeview.LoadCanonicalDocument(ctx, opts)
+	viewDoc, err := mergeview.LoadDiff3Document(ctx, opts)
 	if err != nil {
 		return err
 	}

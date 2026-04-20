@@ -147,6 +147,9 @@ func (s *State) syncDocument() {
 			doc.Segments[i] = seg
 		case markers.ConflictSegment:
 			conflict := segment.conflict
+			seg.Ours = append([]byte(nil), conflict.canonical.Ours...)
+			seg.Base = append([]byte(nil), conflict.canonical.Base...)
+			seg.Theirs = append([]byte(nil), conflict.canonical.Theirs...)
 			seg.OursLabel = conflict.canonical.OursLabel
 			seg.BaseLabel = conflict.canonical.BaseLabel
 			seg.TheirsLabel = conflict.canonical.TheirsLabel
@@ -365,6 +368,8 @@ func (s *State) importParsedDocument(doc markers.Document) {
 			if conflict == nil {
 				continue
 			}
+			conflict.canonical = mergeImportedConflict(conflict.canonical, seg)
+			s.canonical.Segments[i] = conflict.canonical
 			conflict.output = renderConflictMarkers(seg, ConflictLabels{
 				OursLabel:   seg.OursLabel,
 				BaseLabel:   seg.BaseLabel,
@@ -374,6 +379,26 @@ func (s *State) importParsedDocument(doc markers.Document) {
 		}
 	}
 	s.syncDocument()
+}
+
+func mergeImportedConflict(current markers.ConflictSegment, imported markers.ConflictSegment) markers.ConflictSegment {
+	merged := current
+	merged.Ours = append([]byte(nil), imported.Ours...)
+	if len(imported.Base) > 0 {
+		merged.Base = append([]byte(nil), imported.Base...)
+	}
+	merged.Theirs = append([]byte(nil), imported.Theirs...)
+	if imported.OursLabel != "" {
+		merged.OursLabel = imported.OursLabel
+	}
+	if imported.BaseLabel != "" {
+		merged.BaseLabel = imported.BaseLabel
+	}
+	if imported.TheirsLabel != "" {
+		merged.TheirsLabel = imported.TheirsLabel
+	}
+	merged.Resolution = imported.Resolution
+	return merged
 }
 
 func (s *State) renderSlots() []renderSlot {

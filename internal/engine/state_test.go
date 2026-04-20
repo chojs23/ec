@@ -526,6 +526,65 @@ func TestImportMergedPreservesCanonicalBaseLabelForTwoWayConflict(t *testing.T) 
 	}
 }
 
+func TestImportMergedPreservesEditedUnresolvedConflictBodies(t *testing.T) {
+	input := []byte("intro\n<<<<<<< HEAD\nours line\n||||||| base-commit\nbase line\n=======\ntheirs line\n>>>>>>> feature\noutro\n")
+	doc, err := markers.Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	state, err := NewState(doc)
+	if err != nil {
+		t.Fatalf("NewState failed: %v", err)
+	}
+
+	merged := []byte("intro edited\n<<<<<<< ours-label\nours edited\n=======\ntheirs edited\n>>>>>>> theirs-label\noutro edited\n")
+	if err := state.ImportMerged(merged); err != nil {
+		t.Fatalf("ImportMerged failed: %v", err)
+	}
+
+	updated := state.Document()
+	seg, ok := updated.Segments[updated.Conflicts[0].SegmentIndex].(markers.ConflictSegment)
+	if !ok {
+		t.Fatalf("segment is %T, want ConflictSegment", updated.Segments[updated.Conflicts[0].SegmentIndex])
+	}
+	if string(seg.Ours) != "ours edited\n" {
+		t.Fatalf("Ours = %q, want %q", string(seg.Ours), "ours edited\n")
+	}
+	if string(seg.Theirs) != "theirs edited\n" {
+		t.Fatalf("Theirs = %q, want %q", string(seg.Theirs), "theirs edited\n")
+	}
+	if string(seg.Base) != "base line\n" {
+		t.Fatalf("Base = %q, want %q", string(seg.Base), "base line\n")
+	}
+	if seg.BaseLabel != "base-commit" {
+		t.Fatalf("BaseLabel = %q, want %q", seg.BaseLabel, "base-commit")
+	}
+	if got := state.ManualResolved(); len(got) != 0 {
+		t.Fatalf("ManualResolved = %d entries, want 0", len(got))
+	}
+	if got := string(state.RenderMerged()); got != string(merged) {
+		t.Fatalf("RenderMerged = %q, want %q", got, string(merged))
+	}
+
+	labels, known := state.MergedLabels()
+	if !known[0] {
+		t.Fatalf("MergedLabels known = false, want true")
+	}
+	if labels[0].OursLabel != "ours-label" || labels[0].TheirsLabel != "theirs-label" {
+		t.Fatalf("MergedLabels = %+v", labels[0])
+	}
+	if labels[0].BaseLabel != "base-commit" {
+		t.Fatalf("MergedLabels BaseLabel = %q, want %q", labels[0].BaseLabel, "base-commit")
+	}
+
+	if err := state.ApplyResolution(0, markers.ResolutionOurs); err != nil {
+		t.Fatalf("ApplyResolution failed: %v", err)
+	}
+	if got := string(state.RenderMerged()); got != "intro edited\nours edited\noutro edited\n" {
+		t.Fatalf("RenderMerged after ours = %q, want %q", got, "intro edited\nours edited\noutro edited\n")
+	}
+}
+
 func TestImportMergedRejectsReorderedSeparatedConflicts(t *testing.T) {
 	input := []byte("<<<<<<< left-one\nours1\n=======\ntheirs1\n>>>>>>> right-one\n<<<<<<< left-two\nours2\n=======\ntheirs2\n>>>>>>> right-two\n")
 	doc, err := markers.Parse(input)
