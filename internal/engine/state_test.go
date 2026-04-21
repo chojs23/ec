@@ -526,6 +526,48 @@ func TestImportMergedPreservesCanonicalBaseLabelForTwoWayConflict(t *testing.T) 
 	}
 }
 
+func TestClassifyConflictOutputTreatsSurvivingMarkersAsUnresolved(t *testing.T) {
+	// When ImportMerged's line-diff fallback fires (disk and diff3 draw
+	// different segment boundaries), conflict markers can end up wrapped in
+	// surrounding context text inside a single slot. The markers still
+	// indicate an unresolved hunk, not a manual edit — any other
+	// classification leaks raw `<<<<<<<` text into the result pane labelled
+	// as "manual resolved".
+	seg := markers.ConflictSegment{
+		Ours:   []byte("ours\n"),
+		Theirs: []byte("theirs\n"),
+	}
+	output := []byte("before\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nafter\n")
+	res, unresolved, manual, _, _ := classifyConflictOutput(seg, output)
+	if res != markers.ResolutionUnset {
+		t.Fatalf("resolution = %q, want Unset", res)
+	}
+	if !unresolved {
+		t.Fatalf("unresolved = false, want true")
+	}
+	if manual {
+		t.Fatalf("manual = true, want false (markers still present)")
+	}
+}
+
+func TestClassifyConflictOutputMarkerFreeCustomTextIsManual(t *testing.T) {
+	seg := markers.ConflictSegment{
+		Ours:   []byte("ours\n"),
+		Theirs: []byte("theirs\n"),
+	}
+	output := []byte("user typed a custom resolution here\n")
+	res, unresolved, manual, _, _ := classifyConflictOutput(seg, output)
+	if res != markers.ResolutionUnset {
+		t.Fatalf("resolution = %q, want Unset", res)
+	}
+	if unresolved {
+		t.Fatalf("unresolved = true, want false (no markers left)")
+	}
+	if !manual {
+		t.Fatalf("manual = false, want true")
+	}
+}
+
 func TestImportMergedRejectsReorderedSeparatedConflicts(t *testing.T) {
 	input := []byte("<<<<<<< left-one\nours1\n=======\ntheirs1\n>>>>>>> right-one\n<<<<<<< left-two\nours2\n=======\ntheirs2\n>>>>>>> right-two\n")
 	doc, err := markers.Parse(input)
