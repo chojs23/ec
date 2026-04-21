@@ -513,8 +513,14 @@ func classifyConflictOutput(seg markers.ConflictSegment, output []byte) (markers
 		return markers.ResolutionNone, false, false, ConflictLabels{}, false
 	}
 
+	// Any surviving conflict marker means the user has not finished resolving
+	// this hunk. This also covers the case where ImportMerged's line-diff
+	// fallback wraps the markers with misaligned surrounding context — the
+	// extra text lives in adjacent TextSegments of the parsed output, but the
+	// hunk is still unresolved from the user's point of view, not a manual
+	// edit.
 	parsed, err := markers.Parse(output)
-	if err == nil && len(parsed.Conflicts) == 1 && len(parsed.Segments) == 1 {
+	if err == nil && len(parsed.Conflicts) >= 1 {
 		if unresolved, ok := parsed.Segments[parsed.Conflicts[0].SegmentIndex].(markers.ConflictSegment); ok {
 			return markers.ResolutionUnset, true, false, ConflictLabels{
 				OursLabel:   unresolved.OursLabel,
