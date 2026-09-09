@@ -61,7 +61,7 @@
           ec = pkgs.callPackage ./nix/package.nix {
             inherit version;
             src = ./.;
-            vendorHash = "sha256-bV5y8zKculYULkFl9J95qebLOzdTT/LuYycqMmHKZ+g=";
+            vendorHash = "sha256-7OjCWmOoTYTbZ1XXevkrHEGx9Q0qdBqUBo10kvBDDPA=";
           };
 
           default = ec;

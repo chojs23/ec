@@ -1,10 +1,31 @@
 name: CI
 
+# Only inputs used by the Go and Nix checks below should trigger this workflow.
 on:
   pull_request:
+    paths:
+      - "**/*.go"
+      - "**/testdata/**"
+      - "go.mod"
+      - "go.sum"
+      - "**/*.nix"
+      - "flake.lock"
+      - "Makefile"
+      - "codecov.yml"
+      - ".github/workflows/ci.yml"
   push:
     branches:
       - main
+    paths:
+      - "**/*.go"
+      - "**/testdata/**"
+      - "go.mod"
+      - "go.sum"
+      - "**/*.nix"
+      - "flake.lock"
+      - "Makefile"
+      - "codecov.yml"
+      - ".github/workflows/ci.yml"
 
 jobs:
   pr-checks:
