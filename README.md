@@ -1,24 +1,22 @@
 # ec (easy-conflict)
 
-Terminal Git mergetool with a 3-way TUI and Neovim integration
+Terminal Git conflict resolver and diff viewer
 
 [![codecov](https://codecov.io/gh/chojs23/ec/graph/badge.svg?token=AX5BFUF8YN)](https://codecov.io/gh/chojs23/ec)
 
-<img alt="ec 3-way terminal git mergetool" src="https://github.com/user-attachments/assets/f6903327-15c6-4fc0-9427-5bd820ba02ec" />
+![ec conflict resolver](assets/conflict-resolver.png)
 
-![ec demo resolving git merge conflicts in terminal](https://github.com/user-attachments/assets/7c3eba19-d72b-499b-b2e8-3e16f645407e)
+![ec diff viewer](assets/diff-viewer.png)
 
-> With Lazygit
-
-![ec with lazygit](https://github.com/user-attachments/assets/debd1426-5259-47d2-aa83-def364746f3f)
-
-ec (easy-conflict) is a 3-way terminal native Git merge conflict resolver. Supports diff3 base comparison, and helps you resolve merge conflicts faster without leaving the terminal.
+ec (easy-conflict) helps you resolve Git merge conflicts and review changes
+without leaving the terminal. 3-way conflict resolver with diff3 base
+comparison, or browse working tree and commit changes in the diff viewer.
 
 ## Features
 
 1. 3 pane TUI with ours, result, and theirs
 2. Diff3 base view when available via git merge-file
-3. 2 pane diff viewer with changed files and a file-level patch
+3. Diff viewer with a file explorer and split or unified layouts
 4. Non interactive modes for CI or scripts
 5. Optional backup of the merged file
 
