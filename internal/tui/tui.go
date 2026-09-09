@@ -165,6 +165,7 @@ var (
 var ErrBackToSelector = fmt.Errorf("back to selector")
 
 type model struct {
+	visitID          uint64
 	ctx              context.Context
 	opts             cli.Options
 	state            *engine.State
@@ -225,9 +226,25 @@ func Run(ctx context.Context, opts cli.Options) error {
 	if err := ensureThemeLoaded(); err != nil {
 		return err
 	}
-	resolverState, err := loadResolverDocumentState(ctx, opts)
+	m, err := newResolverModel(ctx, opts)
 	if err != nil {
 		return err
+	}
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	finalModel, err := p.Run()
+	if err != nil {
+		return fmt.Errorf("TUI error: %w", err)
+	}
+	if m, ok := finalModel.(model); ok {
+		return m.err
+	}
+	return nil
+}
+
+func newResolverModel(ctx context.Context, opts cli.Options) (model, error) {
+	resolverState, err := loadResolverDocumentState(ctx, opts)
+	if err != nil {
+		return model{}, err
 	}
 
 	doc := resolverState.doc
@@ -238,7 +255,7 @@ func Run(ctx context.Context, opts cli.Options) error {
 			if shouldAllowMissingBaseFallback(ctx, opts, err) {
 				opts.AllowMissingBase = true
 			} else {
-				return fmt.Errorf("base validation failed: %w", err)
+				return model{}, fmt.Errorf("base validation failed: %w", err)
 			}
 		}
 	}
@@ -265,18 +282,7 @@ func Run(ctx context.Context, opts cli.Options) error {
 		pendingScroll:    true,
 	}
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	finalModel, err := p.Run()
-	if err != nil {
-		return fmt.Errorf("TUI error: %w", err)
-	}
-
-	// Check for errors from the model
-	if m, ok := finalModel.(model); ok {
-		return m.err
-	}
-
-	return nil
+	return m, nil
 }
 
 func firstUnresolvedConflict(doc markers.Document, manualResolved map[int][]byte) int {
@@ -298,27 +304,32 @@ func (m model) Init() tea.Cmd {
 }
 
 type editorFinishedMsg struct {
-	err error
+	visitID uint64
+	err     error
 }
 
 type toastExpiredMsg struct {
-	id int
+	visitID uint64
+	id      int
 }
 
 type keySeqExpiredMsg struct {
-	id int
+	visitID uint64
+	id      int
 }
 
 func (m *model) showToast(message string, duration time.Duration) tea.Cmd {
 	m.toastMessage = message
 	m.toastSeq++
 	seq := m.toastSeq
+	visitID := m.visitID
 	return tea.Tick(duration*time.Second, func(time.Time) tea.Msg {
-		return toastExpiredMsg{id: seq}
+		return toastExpiredMsg{visitID: visitID, id: seq}
 	})
 }
 
 func (m *model) openEditor() tea.Cmd {
+	visitID := m.visitID
 	editor := os.Getenv("EDITOR")
 	if editor == "" {
 		editor = "vi"
@@ -326,14 +337,14 @@ func (m *model) openEditor() tea.Cmd {
 
 	if editor == "true" {
 		return func() tea.Msg {
-			return editorFinishedMsg{err: nil}
+			return editorFinishedMsg{visitID: visitID}
 		}
 	}
 
 	mergedBytes, err := os.ReadFile(m.opts.MergedPath)
 	if err != nil {
 		return func() tea.Msg {
-			return editorFinishedMsg{err: fmt.Errorf("read merged for backup: %w", err)}
+			return editorFinishedMsg{visitID: visitID, err: fmt.Errorf("read merged for backup: %w", err)}
 		}
 	}
 
@@ -343,7 +354,7 @@ func (m *model) openEditor() tea.Cmd {
 		bak := m.opts.MergedPath + ".ec.bak"
 		if err := os.WriteFile(bak, mergedBytes, 0o644); err != nil {
 			return func() tea.Msg {
-				return editorFinishedMsg{err: fmt.Errorf("write backup %s: %w", filepath.Base(bak), err)}
+				return editorFinishedMsg{visitID: visitID, err: fmt.Errorf("write backup %s: %w", filepath.Base(bak), err)}
 			}
 		}
 	}
@@ -351,7 +362,7 @@ func (m *model) openEditor() tea.Cmd {
 	if !bytes.Equal(resolved, mergedBytes) {
 		if err := os.WriteFile(m.opts.MergedPath, resolved, 0o644); err != nil {
 			return func() tea.Msg {
-				return editorFinishedMsg{err: fmt.Errorf("write merged before editor: %w", err)}
+				return editorFinishedMsg{visitID: visitID, err: fmt.Errorf("write merged before editor: %w", err)}
 			}
 		}
 	}
@@ -363,9 +374,9 @@ func (m *model) openEditor() tea.Cmd {
 
 	return tea.ExecProcess(cmd, func(err error) tea.Msg {
 		if err != nil {
-			return editorFinishedMsg{err: fmt.Errorf("editor failed: %w", err)}
+			return editorFinishedMsg{visitID: visitID, err: fmt.Errorf("editor failed: %w", err)}
 		}
-		return editorFinishedMsg{err: nil}
+		return editorFinishedMsg{visitID: visitID}
 	})
 }
 
@@ -526,6 +537,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case editorFinishedMsg:
+		if msg.visitID != m.visitID {
+			return m, nil
+		}
 		if msg.err != nil {
 			m.err = fmt.Errorf("editor workflow failed: %w", msg.err)
 			m.quitting = true
@@ -541,13 +555,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case toastExpiredMsg:
-		if msg.id == m.toastSeq {
+		if msg.visitID == m.visitID && msg.id == m.toastSeq {
 			m.toastMessage = ""
 		}
 		return m, nil
 
 	case keySeqExpiredMsg:
-		if msg.id == m.keySeqTimeout {
+		if msg.visitID == m.visitID && msg.id == m.keySeqTimeout {
 			m.keySeq = ""
 		}
 		return m, nil
@@ -564,7 +578,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.keySeqTimeout++
 			id := m.keySeqTimeout
 			return m, tea.Tick(keySeqTimeoutDuration, func(time.Time) tea.Msg {
-				return keySeqExpiredMsg{id: id}
+				return keySeqExpiredMsg{visitID: m.visitID, id: id}
 			})
 		}
 		if key == keyRecenter {
@@ -577,7 +591,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.keySeqTimeout++
 			id := m.keySeqTimeout
 			return m, tea.Tick(keySeqTimeoutDuration, func(time.Time) tea.Msg {
-				return keySeqExpiredMsg{id: id}
+				return keySeqExpiredMsg{visitID: m.visitID, id: id}
 			})
 		}
 		if key == keyGoBottom {
@@ -731,7 +745,8 @@ func (m model) View() string {
 func (m model) renderToastLine() string {
 	content := ""
 	if m.toastMessage != "" {
-		content = toastStyle.Render(m.toastMessage)
+		width := max(m.width-toastStyle.GetHorizontalFrameSize()-toastLineStyle.GetHorizontalFrameSize(), 1)
+		content = toastStyle.Render(truncateDisplayWidth(m.toastMessage, width))
 	}
 	return toastLineStyle.Width(m.width).Render(content)
 }

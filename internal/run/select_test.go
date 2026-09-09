@@ -11,7 +11,6 @@ import (
 
 	"github.com/chojs23/ec/internal/cli"
 	"github.com/chojs23/ec/internal/gitutil"
-	"github.com/chojs23/ec/internal/tui"
 )
 
 func withStdin(t *testing.T, input string, fn func()) {
@@ -411,7 +410,7 @@ func TestPrepareInteractiveFromRepoPopulatesOptions(t *testing.T) {
 	}
 }
 
-func TestSelectWorkspaceFromRepoKeepsConflictsWhenHistoryFails(t *testing.T) {
+func TestLoadWorkspaceFromRepoKeepsConflictsWhenHistoryFails(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping git integration test in short mode")
 	}
@@ -486,49 +485,49 @@ func TestSelectWorkspaceFromRepoKeepsConflictsWhenHistoryFails(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			oldStderr, oldSelector := os.Stderr, workspaceSelector
+			oldStderr := os.Stderr
 			os.Stderr = stderr
 			t.Cleanup(func() {
-				os.Stderr, workspaceSelector = oldStderr, oldSelector
+				os.Stderr = oldStderr
 				stderr.Close()
 			})
-			called := false
-			workspaceSelector = func(_ context.Context, conflicts []tui.FileCandidate, sources []gitutil.DiffSource) (tui.WorkspaceSelection, error) {
-				called = true
-				if len(conflicts) != 1 || conflicts[0].Path != "conflict.txt" || conflicts[0].Resolved {
-					t.Fatalf("conflict choices = %#v", conflicts)
-				}
-				if len(sources) != 1 || sources[0].Kind != gitutil.DiffSourceWorkingTree {
-					t.Fatalf("diff choices = %#v, want working tree only", sources)
-				}
-				return tui.WorkspaceSelection{Kind: tui.WorkspaceSelectionConflict, ConflictPath: conflicts[0].Path}, nil
+			data, err := loadWorkspaceFromRepo(context.Background(), cli.Options{Backup: true})
+			if err != nil {
+				t.Fatalf("load workspace: %v", err)
 			}
-			workspace, selection, err := selectWorkspaceFromRepo(context.Background())
-			if err != nil || !called {
-				t.Fatalf("conflict selector called = %v, error = %v", called, err)
+			if len(data.Conflicts) != 1 || data.Conflicts[0].Path != "conflict.txt" || data.Conflicts[0].Resolved {
+				t.Fatalf("conflict choices = %#v", data.Conflicts)
 			}
-			var opts cli.Options
-			cleanup, err := prepareConflictFromRepo(context.Background(), &opts, workspace, selection.ConflictPath)
+			if len(data.DiffSources) != 1 || data.DiffSources[0].Kind != gitutil.DiffSourceWorkingTree {
+				t.Fatalf("diff choices = %#v, want working tree only", data.DiffSources)
+			}
+			prepared, err := data.PrepareConflict(context.Background(), data.Conflicts[0].Path)
 			if err != nil {
 				t.Fatalf("prepare conflict despite history failure: %v", err)
 			}
-			t.Cleanup(cleanup)
+			t.Cleanup(prepared.Cleanup)
+			opts := prepared.Options
+			if !opts.Backup {
+				t.Fatal("preparation must preserve caller options")
+			}
 			for path, want := range map[string]string{opts.BasePath: "base\n", opts.LocalPath: "ours\n", opts.RemotePath: "theirs\n"} {
 				got, err := os.ReadFile(path)
 				if err != nil || string(got) != want {
 					t.Fatalf("stage content = %q, want %q, error = %v", got, want, err)
 				}
 			}
-			warning, err := os.ReadFile(stderr.Name())
-			if err != nil || !strings.Contains(string(warning), "Warning:") || !strings.Contains(string(warning), tc.command) {
-				t.Fatalf("warning = %q, error = %v", warning, err)
+			if !strings.Contains(data.Warning, "Warning:") || !strings.Contains(data.Warning, tc.command) {
+				t.Fatalf("warning = %q", data.Warning)
+			}
+			output, err = os.ReadFile(stderr.Name())
+			if err != nil || len(output) != 0 {
+				t.Fatalf("workspace loading must not print over the TUI: %q, error = %v", output, err)
 			}
 
 			// Without any supported conflicts, history failures still surface as errors.
 			runGit(t, repoDir, "update-index", "--force-remove", "conflict.txt")
-			called = false
-			if _, _, err := selectWorkspaceFromRepo(context.Background()); err == nil || !strings.Contains(err.Error(), tc.command) || called {
-				t.Fatalf("without conflicts, selector called = %v, error = %v", called, err)
+			if _, err := loadWorkspaceFromRepo(context.Background(), cli.Options{}); err == nil || !strings.Contains(err.Error(), tc.command) {
+				t.Fatalf("without conflicts, expected history error, got %v", err)
 			}
 		})
 	}

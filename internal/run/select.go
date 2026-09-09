@@ -2,9 +2,11 @@ package run
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,10 +18,7 @@ import (
 	"github.com/chojs23/ec/internal/tui"
 )
 
-var (
-	errNoConflicts    = errors.New("no conflicted files found")
-	workspaceSelector = tui.SelectWorkspace
-)
+var errNoConflicts = errors.New("no conflicted files found")
 
 const maxRecentDiffCommits = 100
 
@@ -91,39 +90,49 @@ func discoverRepoWorkspace(ctx context.Context) (repoWorkspace, error) {
 	}, nil
 }
 
-func selectWorkspaceFromRepo(ctx context.Context) (repoWorkspace, tui.WorkspaceSelection, error) {
+func loadWorkspaceFromRepo(ctx context.Context, baseOpts cli.Options) (tui.WorkspaceData, error) {
 	workspace, err := discoverRepoWorkspace(ctx)
 	if err != nil {
-		return repoWorkspace{}, tui.WorkspaceSelection{}, err
+		return tui.WorkspaceData{}, err
 	}
-	warnSkippedConflicts(workspace.skipped)
-
+	var warnings bytes.Buffer
+	writeSkippedConflicts(&warnings, workspace.skipped)
 	conflicts, err := buildFileCandidates(workspace.repoRoot, workspace.conflictPath)
 	if err != nil {
-		return repoWorkspace{}, tui.WorkspaceSelection{}, err
+		return tui.WorkspaceData{}, err
 	}
 	diffSources, err := gitutil.RecentCommitSources(ctx, workspace.repoRoot, workspace.scope, maxRecentDiffCommits)
 	if err != nil {
 		if ctx.Err() != nil {
-			return repoWorkspace{}, tui.WorkspaceSelection{}, ctx.Err()
+			return tui.WorkspaceData{}, ctx.Err()
 		}
 		if len(conflicts) == 0 {
-			return repoWorkspace{}, tui.WorkspaceSelection{}, err
+			return tui.WorkspaceData{}, err
 		}
 		// Resolving index stages must not depend on optional commit history or statistics.
-		fmt.Fprintf(os.Stderr, "Warning: recent commits are unavailable; continuing with conflicts and working tree: %v\n", err)
+		fmt.Fprintf(&warnings, "Warning: recent commits are unavailable; continuing with conflicts and working tree: %v\n", err)
 		diffSources = nil
 	}
 	diffSources = append([]gitutil.DiffSource{gitutil.WorkingTreeSource()}, diffSources...)
-
-	selection, err := workspaceSelector(ctx, conflicts, diffSources)
-	if err != nil {
-		return repoWorkspace{}, tui.WorkspaceSelection{}, err
+	data := tui.WorkspaceData{
+		RepoRoot: workspace.repoRoot, Scope: workspace.scope,
+		Conflicts: conflicts, DiffSources: diffSources,
+		Warning: strings.TrimSpace(warnings.String()),
+		PrepareConflict: func(ctx context.Context, selected string) (tui.PreparedConflict, error) {
+			opts := baseOpts
+			var warnings bytes.Buffer
+			cleanup, err := prepareConflictWithWarnings(ctx, &opts, workspace, selected, &warnings)
+			return tui.PreparedConflict{Options: opts, Cleanup: cleanup, Warning: strings.TrimSpace(warnings.String())}, err
+		},
 	}
-	return workspace, selection, nil
+	return data, nil
 }
 
 func prepareConflictFromRepo(ctx context.Context, opts *cli.Options, workspace repoWorkspace, selected string) (func(), error) {
+	return prepareConflictWithWarnings(ctx, opts, workspace, selected, os.Stderr)
+}
+
+func prepareConflictWithWarnings(ctx context.Context, opts *cli.Options, workspace repoWorkspace, selected string, warnings io.Writer) (func(), error) {
 	repoRoot := workspace.repoRoot
 	stages, ok := workspace.stagesByPath[selected]
 	if !ok {
@@ -151,7 +160,7 @@ func prepareConflictFromRepo(ctx context.Context, opts *cli.Options, workspace r
 	var baseBytes []byte
 	if _, ok := stages[1]; !ok {
 		allowMissingBase = true
-		fmt.Fprintf(os.Stderr, "Warning: base stage missing for %s; continuing without base view.\n", selected)
+		fmt.Fprintf(warnings, "Warning: base stage missing for %s; continuing without base view.\n", selected)
 	} else {
 		baseBytes, err = gitutil.ShowStage(ctx, repoRoot, 1, selected)
 		if err != nil {
@@ -174,8 +183,12 @@ func prepareConflictFromRepo(ctx context.Context, opts *cli.Options, workspace r
 }
 
 func warnSkippedConflicts(skipped []skippedConflict) {
+	writeSkippedConflicts(os.Stderr, skipped)
+}
+
+func writeSkippedConflicts(w io.Writer, skipped []skippedConflict) {
 	for _, conflict := range skipped {
-		fmt.Fprintf(os.Stderr, "Warning: skipping unsupported conflict %q: %s.\n", conflict.path, conflict.reason)
+		fmt.Fprintf(w, "Warning: skipping unsupported conflict %q: %s.\n", conflict.path, conflict.reason)
 	}
 }
 

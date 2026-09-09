@@ -60,6 +60,7 @@ var (
 )
 
 type workspaceSelectModel struct {
+	notice        string
 	items         []selectorItem
 	conflictCount int
 	showDiff      bool
@@ -262,6 +263,9 @@ func (m workspaceSelectModel) bodyHeight() int {
 }
 
 func (m workspaceSelectModel) renderFooter() string {
+	if m.notice != "" {
+		return footerStyle.Width(m.width).Render(truncateDisplayWidth(sanitizeTerminalText(m.notice), max(m.width-4, 1)))
+	}
 	help := []string{"j/k: move", "enter: open", "q: quit"}
 	if m.conflictCount > 0 {
 		help = []string{"j/k: move", "n/p: unresolved", "enter: open", "q: quit"}

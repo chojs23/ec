@@ -1342,6 +1342,13 @@ func TestRenderToastLine(t *testing.T) {
 	if !strings.Contains(m.renderToastLine(), "Saved") {
 		t.Fatalf("expected toast line to include message")
 	}
+	m.toastMessage = strings.Repeat("A long workspace warning ", 10)
+	for _, width := range []int{20, 40, 80} {
+		m.width = width
+		if got := lipgloss.Height(m.renderToastLine()); got != 1 {
+			t.Fatalf("toast height at width %d = %d, want one reserved line", width, got)
+		}
+	}
 
 	m.toastMessage = ""
 	if strings.Contains(m.renderToastLine(), "Saved") {

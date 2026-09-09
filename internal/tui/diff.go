@@ -42,9 +42,10 @@ var (
 )
 
 type diffLoadedMsg struct {
-	key   string
-	patch []byte
-	err   error
+	visitID uint64
+	key     string
+	patch   []byte
+	err     error
 }
 
 type diffLayout struct {
@@ -55,6 +56,7 @@ type diffLayout struct {
 }
 
 type diffModel struct {
+	visitID         uint64
 	ctx             context.Context
 	repoRoot        string
 	source          gitutil.DiffSource
@@ -140,7 +142,7 @@ func (m diffModel) Init() tea.Cmd {
 func (m diffModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case diffLoadedMsg:
-		if msg.key != m.selectedFileKey() {
+		if msg.visitID != m.visitID || msg.key != m.selectedFileKey() {
 			return m, nil
 		}
 		if msg.err != nil {
@@ -152,7 +154,7 @@ func (m diffModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case keySeqExpiredMsg:
-		if msg.id == m.keySeqTimeout {
+		if msg.visitID == m.visitID && msg.id == m.keySeqTimeout {
 			m.keySeq = ""
 		}
 		return m, nil
@@ -252,8 +254,9 @@ func (m *diffModel) handleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 		m.keySeq = keyGoTop
 		m.keySeqTimeout++
 		id := m.keySeqTimeout
+		visitID := m.visitID
 		return tea.Tick(keySeqTimeoutDuration, func(time.Time) tea.Msg {
-			return keySeqExpiredMsg{id: id}
+			return keySeqExpiredMsg{visitID: visitID, id: id}
 		}), true
 	case keyGoBottom:
 		if m.focus == diffFocusExplorer && m.explorerVisible {
@@ -355,7 +358,7 @@ func (m diffModel) loadSelectedPatch() tea.Cmd {
 	key := diffFileCacheKey(file)
 	if patch, ok := m.patchCache[key]; ok {
 		return func() tea.Msg {
-			return diffLoadedMsg{key: key, patch: append([]byte(nil), patch...)}
+			return diffLoadedMsg{visitID: m.visitID, key: key, patch: append([]byte(nil), patch...)}
 		}
 	}
 
@@ -364,7 +367,7 @@ func (m diffModel) loadSelectedPatch() tea.Cmd {
 	source := m.source
 	return func() tea.Msg {
 		patch, err := diffPatchLoader(ctx, repoRoot, source, file)
-		return diffLoadedMsg{key: key, patch: patch, err: err}
+		return diffLoadedMsg{visitID: m.visitID, key: key, patch: patch, err: err}
 	}
 }
 
