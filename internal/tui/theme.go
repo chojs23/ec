@@ -43,6 +43,8 @@ type Theme struct {
 	AddedFg                string `json:"added_fg"`
 	RemovedBg              string `json:"removed_bg"`
 	RemovedFg              string `json:"removed_fg"`
+	DiffHunkBg             string `json:"diff_hunk_bg"`
+	DiffHunkFg             string `json:"diff_hunk_fg"`
 	ConflictedBg           string `json:"conflicted_bg"`
 	ConflictedFg           string `json:"conflicted_fg"`
 	InsertMarkerFg         string `json:"insert_marker_fg"`
@@ -58,6 +60,12 @@ type Theme struct {
 	ToastFg                string `json:"toast_fg"`
 	SelectorResolvedFg     string `json:"selector_resolved_fg"`
 	SelectorUnresolvedFg   string `json:"selector_unresolved_fg"`
+	FileStatusModifiedFg   string `json:"file_status_modified_fg"`
+	FileStatusUntrackedFg  string `json:"file_status_untracked_fg"`
+	FileStatusAddedFg      string `json:"file_status_added_fg"`
+	FileStatusDeletedFg    string `json:"file_status_deleted_fg"`
+	FileStatusRenamedFg    string `json:"file_status_renamed_fg"`
+	FileStatusConflictedFg string `json:"file_status_conflicted_fg"`
 	DimForegroundLight     string `json:"dim_foreground_light"`
 	DimForegroundDark      string `json:"dim_foreground_dark"`
 	DimForegroundMuted     string `json:"dim_foreground_muted"`
@@ -134,16 +142,16 @@ func themeConfigPath() (string, error) {
 
 func defaultTheme() Theme {
 	return Theme{
-		TitleFg:                "170",
-		PaneBorder:             "63",
-		SelectedPaneBorder:     "205",
-		SidePaneBorder:         "255",
-		SelectedSideBorder:     "33",
-		HeaderBg:               "62",
-		HeaderFg:               "230",
-		FooterBg:               "236",
-		FooterFg:               "243",
-		LineNumberFg:           "241",
+		TitleFg:                "#c9d1d9",
+		PaneBorder:             "245",
+		SelectedPaneBorder:     "117",
+		SidePaneBorder:         "245",
+		SelectedSideBorder:     "117",
+		HeaderBg:               "#161b22",
+		HeaderFg:               "#f0f6fc",
+		FooterBg:               "#161b22",
+		FooterFg:               "#8b949e",
+		LineNumberFg:           "#6e7681",
 		OursHighlightBg:        "24",
 		OursHighlightFg:        "230",
 		TheirsHighlightBg:      "52",
@@ -153,10 +161,12 @@ func defaultTheme() Theme {
 		ResultHighlightFg:      "230",
 		ModifiedBg:             "24",
 		ModifiedFg:             "231",
-		AddedBg:                "28",
-		AddedFg:                "231",
-		RemovedBg:              "237",
-		RemovedFg:              "250",
+		AddedBg:                "#0d4429",
+		AddedFg:                "#7ee787",
+		RemovedBg:              "#4c1c1c",
+		RemovedFg:              "#ff7b72",
+		DiffHunkBg:             "#162a46",
+		DiffHunkFg:             "#79c0ff",
 		ConflictedBg:           "131",
 		ConflictedFg:           "231",
 		InsertMarkerFg:         "196",
@@ -172,6 +182,12 @@ func defaultTheme() Theme {
 		ToastFg:                "230",
 		SelectorResolvedFg:     "42",
 		SelectorUnresolvedFg:   "196",
+		FileStatusModifiedFg:   "#d29922",
+		FileStatusUntrackedFg:  "#a371f7",
+		FileStatusAddedFg:      "#3fb950",
+		FileStatusDeletedFg:    "#f85149",
+		FileStatusRenamedFg:    "#58a6ff",
+		FileStatusConflictedFg: "#ff7b72",
 		DimForegroundLight:     "231",
 		DimForegroundDark:      "16",
 		DimForegroundMuted:     "244",
@@ -203,6 +219,8 @@ func mergeTheme(base Theme, override Theme) Theme {
 		AddedFg:                pickColor(base.AddedFg, override.AddedFg),
 		RemovedBg:              pickColor(base.RemovedBg, override.RemovedBg),
 		RemovedFg:              pickColor(base.RemovedFg, override.RemovedFg),
+		DiffHunkBg:             pickColor(base.DiffHunkBg, override.DiffHunkBg),
+		DiffHunkFg:             pickColor(base.DiffHunkFg, override.DiffHunkFg),
 		ConflictedBg:           pickColor(base.ConflictedBg, override.ConflictedBg),
 		ConflictedFg:           pickColor(base.ConflictedFg, override.ConflictedFg),
 		InsertMarkerFg:         pickColor(base.InsertMarkerFg, override.InsertMarkerFg),
@@ -218,6 +236,12 @@ func mergeTheme(base Theme, override Theme) Theme {
 		ToastFg:                pickColor(base.ToastFg, override.ToastFg),
 		SelectorResolvedFg:     pickColor(base.SelectorResolvedFg, override.SelectorResolvedFg),
 		SelectorUnresolvedFg:   pickColor(base.SelectorUnresolvedFg, override.SelectorUnresolvedFg),
+		FileStatusModifiedFg:   pickColor(base.FileStatusModifiedFg, override.FileStatusModifiedFg),
+		FileStatusUntrackedFg:  pickColor(base.FileStatusUntrackedFg, override.FileStatusUntrackedFg),
+		FileStatusAddedFg:      pickColor(base.FileStatusAddedFg, override.FileStatusAddedFg),
+		FileStatusDeletedFg:    pickColor(base.FileStatusDeletedFg, override.FileStatusDeletedFg),
+		FileStatusRenamedFg:    pickColor(base.FileStatusRenamedFg, override.FileStatusRenamedFg),
+		FileStatusConflictedFg: pickColor(base.FileStatusConflictedFg, override.FileStatusConflictedFg),
 		DimForegroundLight:     pickColor(base.DimForegroundLight, override.DimForegroundLight),
 		DimForegroundDark:      pickColor(base.DimForegroundDark, override.DimForegroundDark),
 		DimForegroundMuted:     pickColor(base.DimForegroundMuted, override.DimForegroundMuted),
@@ -303,6 +327,10 @@ func applyTheme(theme Theme) {
 		Background(lipgloss.Color(theme.RemovedBg)).
 		Foreground(lipgloss.Color(theme.RemovedFg))
 
+	diffHunkStyle = lipgloss.NewStyle().
+		Background(lipgloss.Color(theme.DiffHunkBg)).
+		Foreground(lipgloss.Color(theme.DiffHunkFg))
+
 	conflictedLineStyle = lipgloss.NewStyle().
 		Background(lipgloss.Color(theme.ConflictedBg)).
 		Foreground(lipgloss.Color(theme.ConflictedFg))
@@ -357,6 +385,20 @@ func applyTheme(theme Theme) {
 
 	resolvedLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.SelectorResolvedFg))
 	unresolvedLabelStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.SelectorUnresolvedFg))
+
+	fileStatusModifiedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.FileStatusModifiedFg)).Bold(true)
+	fileStatusUntrackedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.FileStatusUntrackedFg)).Bold(true)
+	fileStatusAddedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.FileStatusAddedFg)).Bold(true)
+	fileStatusDeletedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.FileStatusDeletedFg)).Bold(true)
+	fileStatusRenamedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.FileStatusRenamedFg)).Bold(true)
+	fileStatusConflictedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.FileStatusConflictedFg)).Bold(true)
+
+	selectorSectionStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.SelectedSideBorder)).Bold(true)
+	selectorCursorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.SelectedSideBorder)).Bold(true)
+	selectorCommitHashStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.DiffHunkFg)).Bold(true)
+	selectorWorkingTreeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.FileStatusModifiedFg)).Bold(true)
+	selectorMutedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.DimForegroundMuted))
+	selectorSelectedTextStyle = lipgloss.NewStyle().Foreground(lipgloss.Color(theme.HeaderFg)).Bold(true)
 
 	dimForegroundLight = lipgloss.Color(theme.DimForegroundLight)
 	dimForegroundDark = lipgloss.Color(theme.DimForegroundDark)

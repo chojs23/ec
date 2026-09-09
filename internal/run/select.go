@@ -18,20 +18,51 @@ import (
 
 var errNoConflicts = errors.New("no conflicted files found")
 
+const maxRecentDiffCommits = 100
+
 type skippedConflict struct {
 	path   string
 	reason string
 }
 
+type repoWorkspace struct {
+	repoRoot     string
+	scope        string
+	conflictPath []string
+	stagesByPath map[string]map[int]gitutil.StageInfo
+	skipped      []skippedConflict
+}
+
 func prepareInteractiveFromRepo(ctx context.Context, opts *cli.Options) (func(), error) {
+	workspace, err := discoverRepoWorkspace(ctx)
+	if err != nil {
+		return nil, err
+	}
+	warnSkippedConflicts(workspace.skipped)
+
+	if len(workspace.conflictPath) == 0 {
+		if len(workspace.skipped) > 0 {
+			return nil, fmt.Errorf("no supported conflicted files found in the current directory; skipped %s", formatSkippedConflicts(workspace.skipped))
+		}
+		return nil, errNoConflicts
+	}
+
+	selected, err := selectPathInteractive(ctx, workspace.repoRoot, workspace.conflictPath)
+	if err != nil {
+		return nil, err
+	}
+	return prepareConflictFromRepo(ctx, opts, workspace, selected)
+}
+
+func discoverRepoWorkspace(ctx context.Context) (repoWorkspace, error) {
 	cwd, err := os.Getwd()
 	if err != nil {
-		return nil, fmt.Errorf("get working directory: %w", err)
+		return repoWorkspace{}, fmt.Errorf("get working directory: %w", err)
 	}
 
 	repoRoot, err := gitutil.RepoRoot(ctx, cwd)
 	if err != nil {
-		return nil, err
+		return repoWorkspace{}, err
 	}
 
 	scope, err := filepath.Rel(repoRoot, cwd)
@@ -42,25 +73,50 @@ func prepareInteractiveFromRepo(ctx context.Context, opts *cli.Options) (func(),
 
 	paths, err := gitutil.ListUnmergedFiles(ctx, repoRoot, scope)
 	if err != nil {
-		return nil, err
+		return repoWorkspace{}, err
 	}
 	paths, stagesByPath, skipped, err := supportedConflictPaths(ctx, repoRoot, paths)
 	if err != nil {
-		return nil, err
+		return repoWorkspace{}, err
 	}
-	for _, conflict := range skipped {
-		fmt.Fprintf(os.Stderr, "Warning: skipping unsupported conflict %q: %s.\n", conflict.path, conflict.reason)
-	}
-	if len(paths) == 0 {
-		if len(skipped) > 0 {
-			return nil, fmt.Errorf("no supported conflicted files found in the current directory; skipped %s", formatSkippedConflicts(skipped))
-		}
-		return nil, errNoConflicts
-	}
+	return repoWorkspace{
+		repoRoot:     repoRoot,
+		scope:        scope,
+		conflictPath: paths,
+		stagesByPath: stagesByPath,
+		skipped:      skipped,
+	}, nil
+}
 
-	selected, err := selectPathInteractive(ctx, repoRoot, paths)
+func selectWorkspaceFromRepo(ctx context.Context) (repoWorkspace, tui.WorkspaceSelection, error) {
+	workspace, err := discoverRepoWorkspace(ctx)
 	if err != nil {
-		return nil, err
+		return repoWorkspace{}, tui.WorkspaceSelection{}, err
+	}
+	warnSkippedConflicts(workspace.skipped)
+
+	conflicts, err := buildFileCandidates(workspace.repoRoot, workspace.conflictPath)
+	if err != nil {
+		return repoWorkspace{}, tui.WorkspaceSelection{}, err
+	}
+	diffSources, err := gitutil.RecentCommitSources(ctx, workspace.repoRoot, workspace.scope, maxRecentDiffCommits)
+	if err != nil {
+		return repoWorkspace{}, tui.WorkspaceSelection{}, err
+	}
+	diffSources = append([]gitutil.DiffSource{gitutil.WorkingTreeSource()}, diffSources...)
+
+	selection, err := tui.SelectWorkspace(ctx, conflicts, diffSources)
+	if err != nil {
+		return repoWorkspace{}, tui.WorkspaceSelection{}, err
+	}
+	return workspace, selection, nil
+}
+
+func prepareConflictFromRepo(ctx context.Context, opts *cli.Options, workspace repoWorkspace, selected string) (func(), error) {
+	repoRoot := workspace.repoRoot
+	stages, ok := workspace.stagesByPath[selected]
+	if !ok {
+		return nil, fmt.Errorf("selected conflicted file %q is no longer available", selected)
 	}
 
 	mergedPath := selected
@@ -71,7 +127,6 @@ func prepareInteractiveFromRepo(ctx context.Context, opts *cli.Options) (func(),
 		return nil, fmt.Errorf("cannot access merged file %s: %w", selected, err)
 	}
 
-	stages := stagesByPath[selected]
 	localBytes, err := gitutil.ShowStage(ctx, repoRoot, 2, selected)
 	if err != nil {
 		return nil, fmt.Errorf("missing ours stage for %s: %w", selected, err)
@@ -105,6 +160,12 @@ func prepareInteractiveFromRepo(ctx context.Context, opts *cli.Options) (func(),
 	opts.AllowMissingBase = allowMissingBase
 
 	return cleanup, nil
+}
+
+func warnSkippedConflicts(skipped []skippedConflict) {
+	for _, conflict := range skipped {
+		fmt.Fprintf(os.Stderr, "Warning: skipping unsupported conflict %q: %s.\n", conflict.path, conflict.reason)
+	}
 }
 
 func supportedConflictPaths(ctx context.Context, repoRoot string, paths []string) ([]string, map[string]map[int]gitutil.StageInfo, []skippedConflict, error) {

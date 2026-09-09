@@ -17,8 +17,8 @@ func TestLoadThemeFromConfigMissingFileUsesDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadThemeFromConfig() error = %v", err)
 	}
-	if theme.HeaderBg != "62" {
-		t.Fatalf("header_bg = %q, want 62", theme.HeaderBg)
+	if theme.HeaderBg != "#161b22" {
+		t.Fatalf("header_bg = %q, want #161b22", theme.HeaderBg)
 	}
 }
 
@@ -36,6 +36,7 @@ func TestLoadThemeFromConfigMergesOverrides(t *testing.T) {
   "themes": {
     "warm": {
       "header_bg": "94",
+	  "file_status_modified_fg": "202",
       "dim_foreground_muted": "123"
     }
   }
@@ -51,11 +52,39 @@ func TestLoadThemeFromConfigMergesOverrides(t *testing.T) {
 	if theme.HeaderBg != "94" {
 		t.Fatalf("header_bg = %q, want 94", theme.HeaderBg)
 	}
-	if theme.HeaderFg != "230" {
-		t.Fatalf("header_fg = %q, want 230", theme.HeaderFg)
+	if theme.HeaderFg != "#f0f6fc" {
+		t.Fatalf("header_fg = %q, want #f0f6fc", theme.HeaderFg)
 	}
 	if theme.DimForegroundMuted != "123" {
 		t.Fatalf("dim_foreground_muted = %q, want 123", theme.DimForegroundMuted)
+	}
+	if theme.FileStatusModifiedFg != "202" || theme.FileStatusDeletedFg != "#f85149" {
+		t.Fatalf("file status colors = %q and %q, want override and fallback", theme.FileStatusModifiedFg, theme.FileStatusDeletedFg)
+	}
+}
+
+func TestDefaultThemeUsesDistinctPaneAndDiffColors(t *testing.T) {
+	theme := defaultTheme()
+	if theme.TitleFg != "#c9d1d9" || theme.HeaderBg != "#161b22" || theme.FooterBg != "#161b22" {
+		t.Fatalf("default chrome colors = %q, %q, and %q, want neutral GitHub-style chrome", theme.TitleFg, theme.HeaderBg, theme.FooterBg)
+	}
+	if theme.HeaderFg != "#f0f6fc" || theme.FooterFg != "#8b949e" || theme.LineNumberFg != "#6e7681" {
+		t.Fatalf("default text colors = %q, %q, and %q, want clear primary and muted text", theme.HeaderFg, theme.FooterFg, theme.LineNumberFg)
+	}
+	if theme.PaneBorder != "245" || theme.SidePaneBorder != "245" {
+		t.Fatalf("default borders = %q and %q, want gray", theme.PaneBorder, theme.SidePaneBorder)
+	}
+	if theme.SelectedPaneBorder != "117" || theme.SelectedSideBorder != "117" {
+		t.Fatalf("selected borders = %q and %q, want light blue", theme.SelectedPaneBorder, theme.SelectedSideBorder)
+	}
+	if theme.AddedFg != "#7ee787" || theme.AddedBg != "#0d4429" {
+		t.Fatalf("added colors = %q on %q, want GitHub-style green", theme.AddedFg, theme.AddedBg)
+	}
+	if theme.RemovedFg != "#ff7b72" || theme.RemovedBg != "#4c1c1c" {
+		t.Fatalf("removed colors = %q on %q, want GitHub-style red", theme.RemovedFg, theme.RemovedBg)
+	}
+	if theme.DiffHunkFg != "#79c0ff" || theme.DiffHunkBg != "#162a46" {
+		t.Fatalf("hunk colors = %q on %q, want muted GitHub-style blue", theme.DiffHunkFg, theme.DiffHunkBg)
 	}
 }
 
@@ -117,6 +146,9 @@ func TestApplyThemeUpdatesDimColors(t *testing.T) {
 	theme.DimForegroundDark = "102"
 	theme.DimForegroundMuted = "103"
 	theme.SelectedHunkBg = "104"
+	theme.FileStatusModifiedFg = "105"
+	theme.DiffHunkBg = "106"
+	theme.DiffHunkFg = "107"
 
 	applyTheme(theme)
 
@@ -131,6 +163,12 @@ func TestApplyThemeUpdatesDimColors(t *testing.T) {
 	}
 	if selectedHunkBackground != lipgloss.Color("104") {
 		t.Fatalf("selectedHunkBackground = %q, want 104", selectedHunkBackground)
+	}
+	if fileStatusModifiedStyle.GetForeground() != lipgloss.Color("105") {
+		t.Fatalf("fileStatusModifiedStyle foreground = %q, want 105", fileStatusModifiedStyle.GetForeground())
+	}
+	if diffHunkStyle.GetBackground() != lipgloss.Color("106") || diffHunkStyle.GetForeground() != lipgloss.Color("107") {
+		t.Fatalf("diffHunkStyle colors = %q on %q, want 107 on 106", diffHunkStyle.GetForeground(), diffHunkStyle.GetBackground())
 	}
 }
 

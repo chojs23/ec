@@ -131,6 +131,7 @@ var (
 	modifiedLineStyle         lipgloss.Style
 	addedLineStyle            lipgloss.Style
 	removedLineStyle          lipgloss.Style
+	diffHunkStyle             lipgloss.Style
 	conflictedLineStyle       lipgloss.Style
 	insertMarkerStyle         lipgloss.Style
 	selectedHunkMarkerStyle   lipgloss.Style
@@ -143,6 +144,18 @@ var (
 	toastStyle                lipgloss.Style
 	toastLineStyle            lipgloss.Style
 	resultTitleStyle          lipgloss.Style
+	fileStatusModifiedStyle   lipgloss.Style
+	fileStatusUntrackedStyle  lipgloss.Style
+	fileStatusAddedStyle      lipgloss.Style
+	fileStatusDeletedStyle    lipgloss.Style
+	fileStatusRenamedStyle    lipgloss.Style
+	fileStatusConflictedStyle lipgloss.Style
+	selectorSectionStyle      lipgloss.Style
+	selectorCursorStyle       lipgloss.Style
+	selectorCommitHashStyle   lipgloss.Style
+	selectorWorkingTreeStyle  lipgloss.Style
+	selectorMutedStyle        lipgloss.Style
+	selectorSelectedTextStyle lipgloss.Style
 
 	dimForegroundLight lipgloss.Color
 	dimForegroundDark  lipgloss.Color

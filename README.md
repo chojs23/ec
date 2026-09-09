@@ -18,7 +18,7 @@ ec (easy-conflict) is a 3-way terminal native Git merge conflict resolver. Suppo
 
 1. 3 pane TUI with ours, result, and theirs
 2. Diff3 base view when available via git merge-file
-3. No args mode that lists conflicted files and lets you pick one
+3. 2 pane diff viewer with changed files and a file-level patch
 4. Non interactive modes for CI or scripts
 5. Optional backup of the merged file
 
@@ -129,11 +129,30 @@ make build
 
 ## Quick start
 
-Run with no args inside a git repo that has conflicts
+Run with no args inside a Git repo
 
 ```
 ec
 ```
+
+The selector shows conflicted files first, followed by a `View Diff` section.
+Choose `working tree` to inspect staged, unstaged, and untracked changes, or
+choose one of the latest 100 commits. Each commit row shows its total deletions
+in red and additions in green. The diff viewer lists changed files in the left
+pane and shows the selected file patch in an old/new split layout by default.
+Press `s` to toggle between split and unified diff layouts.
+
+Diff viewer keys:
+
+- `h` / `l`: focus the file explorer or diff view
+- `j` / `k`: move or scroll in the focused pane
+- `H` / `L`, `left` / `right`, or horizontal mouse wheel: scroll the focused pane horizontally
+- `ctrl+u` / `ctrl+d`: scroll half a page
+- `gg` / `G`: go to the top or bottom
+- `e`: open or close the file explorer
+- `s`: toggle unified or split diff
+- `option+h` / `option+l` or `option+left` / `option+right`: resize the file explorer
+- `q`: return to the selector
 
 ### Notes
 
@@ -335,6 +354,8 @@ Example:
 ```
 
 Missing keys fall back to the built-in defaults.
+The diff viewer uses `selected_side_border` for its focused pane so selection
+matches the conflict resolver.
 
 Hex colors require a TrueColor-capable terminal to avoid 256-color downsampling.
 
@@ -343,59 +364,70 @@ Supported keys:
 `header_bg`, `header_fg`, `footer_bg`, `footer_fg`, `line_number`, `ours_highlight_bg`,
 `ours_highlight_fg`, `theirs_highlight_bg`, `theirs_highlight_fg`, `result_fg`,
 `result_highlight_bg`, `result_highlight_fg`, `modified_bg`, `modified_fg`, `added_bg`,
-`added_fg`, `removed_bg`, `removed_fg`, `conflicted_bg`, `conflicted_fg`,
+`added_fg`, `removed_bg`, `removed_fg`, `diff_hunk_bg`, `diff_hunk_fg`,
+`conflicted_bg`, `conflicted_fg`,
 `insert_marker_fg`, `selected_hunk_marker_fg`, `selected_hunk_marker_bg`, `selected_hunk_bg`,
 `status_resolved_fg`, `status_unresolved_fg`, `result_resolved_marker_fg`,
 `result_resolved_border`, `result_unresolved_border`, `toast_bg`, `toast_fg`,
 `selector_resolved_fg`, `selector_unresolved_fg`, `dim_foreground_light`,
+`file_status_modified_fg`, `file_status_untracked_fg`, `file_status_added_fg`,
+`file_status_deleted_fg`, `file_status_renamed_fg`, `file_status_conflicted_fg`,
 `dim_foreground_dark`, `dim_foreground_muted`.
 
 <details>
 <summary>Default theme colors</summary>
 
-| Key                         | Default |
-| --------------------------- | ------- |
-| `title_fg`                  | `170`   |
-| `pane_border`               | `63`    |
-| `selected_pane_border`      | `205`   |
-| `side_pane_border`          | `255`   |
-| `selected_side_border`      | `33`    |
-| `header_bg`                 | `62`    |
-| `header_fg`                 | `230`   |
-| `footer_bg`                 | `236`   |
-| `footer_fg`                 | `243`   |
-| `line_number`               | `241`   |
-| `ours_highlight_bg`         | `24`    |
-| `ours_highlight_fg`         | `230`   |
-| `theirs_highlight_bg`       | `52`    |
-| `theirs_highlight_fg`       | `230`   |
-| `result_fg`                 | `231`   |
-| `result_highlight_bg`       | `60`    |
-| `result_highlight_fg`       | `230`   |
-| `modified_bg`               | `24`    |
-| `modified_fg`               | `231`   |
-| `added_bg`                  | `28`    |
-| `added_fg`                  | `231`   |
-| `removed_bg`                | `237`   |
-| `removed_fg`                | `250`   |
-| `conflicted_bg`             | `131`   |
-| `conflicted_fg`             | `231`   |
-| `insert_marker_fg`          | `196`   |
-| `selected_hunk_marker_fg`   | `226`   |
-| `selected_hunk_marker_bg`   | `88`    |
-| `selected_hunk_bg`          | `236`   |
-| `status_resolved_fg`        | `42`    |
-| `status_unresolved_fg`      | `196`   |
-| `result_resolved_marker_fg` | `42`    |
-| `result_resolved_border`    | `42`    |
-| `result_unresolved_border`  | `196`   |
-| `toast_bg`                  | `22`    |
-| `toast_fg`                  | `230`   |
-| `selector_resolved_fg`      | `42`    |
-| `selector_unresolved_fg`    | `196`   |
-| `dim_foreground_light`      | `231`   |
-| `dim_foreground_dark`       | `16`    |
-| `dim_foreground_muted`      | `244`   |
+| Key                         | Default   |
+| --------------------------- | --------- |
+| `title_fg`                  | `#c9d1d9` |
+| `pane_border`               | `245`     |
+| `selected_pane_border`      | `117`     |
+| `side_pane_border`          | `245`     |
+| `selected_side_border`      | `117`     |
+| `header_bg`                 | `#161b22` |
+| `header_fg`                 | `#f0f6fc` |
+| `footer_bg`                 | `#161b22` |
+| `footer_fg`                 | `#8b949e` |
+| `line_number`               | `#6e7681` |
+| `ours_highlight_bg`         | `24`      |
+| `ours_highlight_fg`         | `230`     |
+| `theirs_highlight_bg`       | `52`      |
+| `theirs_highlight_fg`       | `230`     |
+| `result_fg`                 | `231`     |
+| `result_highlight_bg`       | `60`      |
+| `result_highlight_fg`       | `230`     |
+| `modified_bg`               | `24`      |
+| `modified_fg`               | `231`     |
+| `added_bg`                  | `#0d4429` |
+| `added_fg`                  | `#7ee787` |
+| `removed_bg`                | `#4c1c1c` |
+| `removed_fg`                | `#ff7b72` |
+| `diff_hunk_bg`              | `#162a46` |
+| `diff_hunk_fg`              | `#79c0ff` |
+| `conflicted_bg`             | `131`     |
+| `conflicted_fg`             | `231`     |
+| `insert_marker_fg`          | `196`     |
+| `selected_hunk_marker_fg`   | `226`     |
+| `selected_hunk_marker_bg`   | `88`      |
+| `selected_hunk_bg`          | `236`     |
+| `status_resolved_fg`        | `42`      |
+| `status_unresolved_fg`      | `196`     |
+| `result_resolved_marker_fg` | `42`      |
+| `result_resolved_border`    | `42`      |
+| `result_unresolved_border`  | `196`     |
+| `toast_bg`                  | `22`      |
+| `toast_fg`                  | `230`     |
+| `selector_resolved_fg`      | `42`      |
+| `selector_unresolved_fg`    | `196`     |
+| `file_status_modified_fg`   | `#d29922` |
+| `file_status_untracked_fg`  | `#a371f7` |
+| `file_status_added_fg`      | `#3fb950` |
+| `file_status_deleted_fg`    | `#f85149` |
+| `file_status_renamed_fg`    | `#58a6ff` |
+| `file_status_conflicted_fg` | `#ff7b72` |
+| `dim_foreground_light`      | `231`     |
+| `dim_foreground_dark`       | `16`      |
+| `dim_foreground_muted`      | `244`     |
 
 </details>
 

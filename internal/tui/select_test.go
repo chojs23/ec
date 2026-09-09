@@ -1,14 +1,14 @@
 package tui
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/chojs23/ec/internal/gitutil"
 )
 
 type stubProgram struct {
@@ -31,198 +31,180 @@ func withSelectProgram(t *testing.T, fn func(model tea.Model, ctx context.Contex
 	run()
 }
 
-func TestFileItemMethods(t *testing.T) {
-	item := fileItem{path: "conflict.txt"}
-	if item.Title() != "conflict.txt" {
-		t.Fatalf("Title = %q, want conflict.txt", item.Title())
+func TestWorkspaceSelectorShowsConflictAndDiffSections(t *testing.T) {
+	model := newWorkspaceSelectModel(
+		[]FileCandidate{
+			{Path: "resolved.txt", Resolved: true},
+			{Path: "unresolved.txt", Resolved: false},
+		},
+		[]gitutil.DiffSource{
+			gitutil.WorkingTreeSource(),
+			{
+				Kind:       gitutil.DiffSourceCommit,
+				ShortHash:  "abc1234",
+				Subject:    "add viewer",
+				Deletions:  4,
+				Additions:  12,
+				StatsKnown: true,
+			},
+		},
+	)
+
+	if model.selected != 1 {
+		t.Fatalf("selected = %d, want first unresolved conflict at 1", model.selected)
 	}
-	if item.Description() != "" {
-		t.Fatalf("Description = %q, want empty", item.Description())
-	}
-	if item.FilterValue() != "conflict.txt" {
-		t.Fatalf("FilterValue = %q, want conflict.txt", item.FilterValue())
+	view := model.View()
+	for _, text := range []string{
+		"Workspace", "2 conflicts", "2 diff sources", "Conflicts  2",
+		"resolved.txt", "unresolved.txt", "View Diff  2", "working tree",
+		"abc1234", "add viewer", "-4", "+12",
+	} {
+		if !strings.Contains(view, text) {
+			t.Fatalf("view missing %q:\n%s", text, view)
+		}
 	}
 }
 
-func TestFileItemDelegateLayout(t *testing.T) {
-	delegate := fileItemDelegate{}
-	if delegate.Height() != 1 {
-		t.Fatalf("Height = %d, want 1", delegate.Height())
-	}
-	if delegate.Spacing() != 0 {
-		t.Fatalf("Spacing = %d, want 0", delegate.Spacing())
-	}
+func TestWorkspaceSelectorKeepsCommitStatsVisibleWhenSubjectTruncates(t *testing.T) {
+	model := newWorkspaceSelectModel(nil, []gitutil.DiffSource{{
+		Kind:       gitutil.DiffSourceCommit,
+		ShortHash:  "1234567890abcdef",
+		Subject:    strings.Repeat("long subject ", 12),
+		Deletions:  123,
+		Additions:  45,
+		StatsKnown: true,
+	}})
 
-	model := list.New(nil, delegate, 0, 0)
-	if cmd := delegate.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}}, &model); cmd != nil {
-		t.Fatalf("expected nil cmd from delegate.Update")
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 32, Height: 8})
+	view := updated.(workspaceSelectModel).View()
+	if !strings.Contains(view, "-123") || !strings.Contains(view, "+45") {
+		t.Fatalf("view does not preserve commit totals at narrow width:\n%s", view)
+	}
+	for _, line := range strings.Split(view, "\n") {
+		if width := lipgloss.Width(line); width > 32 {
+			t.Fatalf("line width = %d, want <= 32:\n%s", width, line)
+		}
 	}
 }
 
-func TestFileItemDelegateRender(t *testing.T) {
-	items := []list.Item{
-		fileItem{path: "a.txt", resolved: false},
-		fileItem{path: "b.txt", resolved: true},
+func TestWorkspaceSelectorWithoutConflictsFocusesWorkingTree(t *testing.T) {
+	model := newWorkspaceSelectModel(nil, []gitutil.DiffSource{gitutil.WorkingTreeSource()})
+	if model.selected != 0 {
+		t.Fatalf("selected = %d, want working tree at 0", model.selected)
 	}
-	model := list.New(items, fileItemDelegate{}, 0, 0)
-	model.Select(0)
-
-	delegate := fileItemDelegate{}
-	var buf bytes.Buffer
-	delegate.Render(&buf, model, 0, items[0])
-	output := buf.String()
-	if !strings.HasPrefix(output, "> ") {
-		t.Fatalf("output = %q, want selected cursor prefix", output)
-	}
-	if !strings.Contains(output, "unresolved") {
-		t.Fatalf("output = %q, want unresolved label", output)
-	}
-	if !strings.Contains(output, "a.txt") {
-		t.Fatalf("output = %q, want file path", output)
-	}
-
-	buf.Reset()
-	model.Select(1)
-	delegate.Render(&buf, model, 1, items[1])
-	output = buf.String()
-	if !strings.HasPrefix(output, "> ") {
-		t.Fatalf("output = %q, want selected cursor prefix", output)
-	}
-	if strings.Contains(output, "unresolved") {
-		t.Fatalf("output = %q, did not expect unresolved label", output)
-	}
-	if !strings.Contains(output, "  resolved") {
-		t.Fatalf("output = %q, want resolved label", output)
+	if strings.Contains(model.View(), "Conflicts") || !strings.Contains(model.View(), "View Diff") {
+		t.Fatalf("view = %q, want only the diff section", model.View())
 	}
 }
 
-func TestFileSelectModelUpdateEnter(t *testing.T) {
-	items := []list.Item{fileItem{path: "a.txt", resolved: false}}
-	model := fileSelectModel{list: list.New(items, fileItemDelegate{}, 0, 0)}
+func TestWorkspaceSelectorSelectsConflictAndDiffTargets(t *testing.T) {
+	model := newWorkspaceSelectModel(
+		[]FileCandidate{{Path: "conflict.txt"}},
+		[]gitutil.DiffSource{{Kind: gitutil.DiffSourceCommit, Commit: "full", ShortHash: "short", Subject: "subject"}},
+	)
 
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
-	result := updated.(fileSelectModel)
-	if result.selected != "a.txt" {
-		t.Fatalf("selected = %q, want a.txt", result.selected)
+	conflictResult := updated.(workspaceSelectModel).result
+	if conflictResult.Kind != WorkspaceSelectionConflict || conflictResult.ConflictPath != "conflict.txt" {
+		t.Fatalf("conflict result = %#v", conflictResult)
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = updated.(workspaceSelectModel)
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	diffResult := updated.(workspaceSelectModel).result
+	if diffResult.Kind != WorkspaceSelectionDiff || diffResult.DiffSource.Commit != "full" {
+		t.Fatalf("diff result = %#v", diffResult)
 	}
 }
 
-func TestFileSelectModelUpdateQuit(t *testing.T) {
-	items := []list.Item{fileItem{path: "a.txt", resolved: false}}
-	model := fileSelectModel{list: list.New(items, fileItemDelegate{}, 0, 0)}
+func TestWorkspaceSelectorUnresolvedNavigationStaysInConflictSection(t *testing.T) {
+	model := newWorkspaceSelectModel(
+		[]FileCandidate{
+			{Path: "a.txt", Resolved: false},
+			{Path: "b.txt", Resolved: true},
+			{Path: "c.txt", Resolved: false},
+		},
+		[]gitutil.DiffSource{gitutil.WorkingTreeSource()},
+	)
 
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	model = updated.(workspaceSelectModel)
+	if model.selected != 2 {
+		t.Fatalf("selected = %d, want next unresolved at 2", model.selected)
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
+	model = updated.(workspaceSelectModel)
+	if model.selected != 2 {
+		t.Fatalf("selected = %d, want navigation to stop before diff section", model.selected)
+	}
+
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	model = updated.(workspaceSelectModel)
+	if model.selected != 0 {
+		t.Fatalf("selected = %d, want previous unresolved at 0", model.selected)
+	}
+}
+
+func TestWorkspaceSelectorResizeKeepsSelectionVisible(t *testing.T) {
+	sources := []gitutil.DiffSource{gitutil.WorkingTreeSource()}
+	for index := 0; index < 10; index++ {
+		sources = append(sources, gitutil.DiffSource{
+			Kind:      gitutil.DiffSourceCommit,
+			ShortHash: "commit",
+			Subject:   "history",
+		})
+	}
+	model := newWorkspaceSelectModel(nil, sources)
+
+	updated, _ := model.Update(tea.WindowSizeMsg{Width: 40, Height: 6})
+	model = updated.(workspaceSelectModel)
+	for range 10 {
+		updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyDown})
+		model = updated.(workspaceSelectModel)
+	}
+
+	if model.offset == 0 {
+		t.Fatalf("offset = 0, want scrolled selector")
+	}
+	if !strings.Contains(model.View(), "history") {
+		t.Fatalf("view does not contain selected history row")
+	}
+}
+
+func TestWorkspaceSelectorQuit(t *testing.T) {
+	model := newWorkspaceSelectModel(nil, []gitutil.DiffSource{gitutil.WorkingTreeSource()})
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
-	result := updated.(fileSelectModel)
-	if result.err != ErrSelectorQuit {
+	if result := updated.(workspaceSelectModel); result.err != ErrSelectorQuit {
 		t.Fatalf("err = %v, want ErrSelectorQuit", result.err)
 	}
 }
 
-func TestFileSelectModelUpdateNextUnresolved(t *testing.T) {
-	items := []list.Item{
-		fileItem{path: "a.txt", resolved: true},
-		fileItem{path: "b.txt", resolved: false},
-		fileItem{path: "c.txt", resolved: true},
-		fileItem{path: "d.txt", resolved: false},
-	}
-	model := fileSelectModel{list: list.New(items, fileItemDelegate{}, 0, 0)}
-	model.list.Select(0)
-
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	result := updated.(fileSelectModel)
-	if result.list.Index() != 1 {
-		t.Fatalf("Index() = %d, want 1", result.list.Index())
-	}
-
-	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	result = updated.(fileSelectModel)
-	if result.list.Index() != 3 {
-		t.Fatalf("Index() = %d, want 3", result.list.Index())
-	}
-}
-
-func TestFileSelectModelUpdatePreviousUnresolved(t *testing.T) {
-	items := []list.Item{
-		fileItem{path: "a.txt", resolved: false},
-		fileItem{path: "b.txt", resolved: true},
-		fileItem{path: "c.txt", resolved: false},
-		fileItem{path: "d.txt", resolved: true},
-	}
-	model := fileSelectModel{list: list.New(items, fileItemDelegate{}, 0, 0)}
-	model.list.Select(3)
-
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	result := updated.(fileSelectModel)
-	if result.list.Index() != 2 {
-		t.Fatalf("Index() = %d, want 2", result.list.Index())
-	}
-
-	updated, _ = result.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	result = updated.(fileSelectModel)
-	if result.list.Index() != 0 {
-		t.Fatalf("Index() = %d, want 0", result.list.Index())
-	}
-}
-
-func TestFileSelectModelUpdateUnresolvedNavigationStopsAtBoundary(t *testing.T) {
-	items := []list.Item{
-		fileItem{path: "a.txt", resolved: false},
-		fileItem{path: "b.txt", resolved: true},
-		fileItem{path: "c.txt", resolved: false},
-	}
-
-	model := fileSelectModel{list: list.New(items, fileItemDelegate{}, 0, 0)}
-	model.list.Select(0)
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	result := updated.(fileSelectModel)
-	if result.list.Index() != 0 {
-		t.Fatalf("Index() = %d, want 0", result.list.Index())
-	}
-
-	model.list.Select(2)
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	result = updated.(fileSelectModel)
-	if result.list.Index() != 2 {
-		t.Fatalf("Index() = %d, want 2", result.list.Index())
-	}
-}
-
-func TestFileSelectModelWindowResize(t *testing.T) {
-	items := []list.Item{fileItem{path: "a.txt", resolved: false}}
-	model := fileSelectModel{list: list.New(items, fileItemDelegate{}, 0, 0)}
-
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: 40, Height: 4})
-	result := updated.(fileSelectModel)
-	if result.list.Width() != 40 {
-		t.Fatalf("Width = %d, want 40", result.list.Width())
-	}
-	if result.list.Height() != 3 {
-		t.Fatalf("Height = %d, want 3", result.list.Height())
-	}
-}
-
-func TestFileSelectModelView(t *testing.T) {
-	items := []list.Item{fileItem{path: "a.txt", resolved: false}}
-	model := fileSelectModel{list: list.New(items, fileItemDelegate{}, 0, 0)}
-	view := model.View()
-	if !strings.Contains(view, "up/down: move") {
-		t.Fatalf("view = %q, want help line", view)
-	}
-	if !strings.Contains(view, "n/p: unresolved") {
-		t.Fatalf("view = %q, want unresolved navigation help", view)
-	}
-}
-
-func TestFileSelectModelInitReturnsNil(t *testing.T) {
-	model := fileSelectModel{}
-	if cmd := model.Init(); cmd != nil {
-		t.Fatalf("Init() = %v, want nil", cmd)
-	}
-}
-
-func TestSelectFileReturnsSelected(t *testing.T) {
+func TestSelectWorkspaceReturnsSelection(t *testing.T) {
+	want := WorkspaceSelection{Kind: WorkspaceSelectionDiff, DiffSource: gitutil.WorkingTreeSource()}
 	withSelectProgram(t, func(model tea.Model, ctx context.Context) programRunner {
-		return stubProgram{model: fileSelectModel{selected: "picked.txt"}}
+		if _, ok := model.(workspaceSelectModel); !ok {
+			t.Fatalf("model type = %T, want workspaceSelectModel", model)
+		}
+		return stubProgram{model: workspaceSelectModel{result: want}}
+	}, func() {
+		selected, err := SelectWorkspace(context.Background(), nil, []gitutil.DiffSource{gitutil.WorkingTreeSource()})
+		if err != nil {
+			t.Fatalf("SelectWorkspace error = %v", err)
+		}
+		if selected.Kind != want.Kind || selected.DiffSource.Kind != want.DiffSource.Kind {
+			t.Fatalf("SelectWorkspace = %#v, want %#v", selected, want)
+		}
+	})
+}
+
+func TestSelectFileReturnsConflictSelection(t *testing.T) {
+	withSelectProgram(t, func(model tea.Model, ctx context.Context) programRunner {
+		return stubProgram{model: workspaceSelectModel{result: WorkspaceSelection{
+			Kind:         WorkspaceSelectionConflict,
+			ConflictPath: "picked.txt",
+		}}}
 	}, func() {
 		selected, err := SelectFile(context.Background(), []FileCandidate{{Path: "picked.txt"}})
 		if err != nil {
@@ -234,62 +216,13 @@ func TestSelectFileReturnsSelected(t *testing.T) {
 	})
 }
 
-func TestSelectFileFocusesFirstUnresolved(t *testing.T) {
-	withSelectProgram(t, func(model tea.Model, ctx context.Context) programRunner {
-		selector, ok := model.(fileSelectModel)
-		if !ok {
-			t.Fatalf("model type = %T, want fileSelectModel", model)
-		}
-		if selector.list.Index() != 1 {
-			t.Fatalf("Index() = %d, want 1", selector.list.Index())
-		}
-		return stubProgram{model: fileSelectModel{selected: "b.txt"}}
-	}, func() {
-		selected, err := SelectFile(context.Background(), []FileCandidate{
-			{Path: "a.txt", Resolved: true},
-			{Path: "b.txt", Resolved: false},
-			{Path: "c.txt", Resolved: false},
-		})
-		if err != nil {
-			t.Fatalf("SelectFile error = %v", err)
-		}
-		if selected != "b.txt" {
-			t.Fatalf("SelectFile = %q, want b.txt", selected)
-		}
-	})
-}
-
-func TestSelectFileKeepsInitialFocusWhenAllResolved(t *testing.T) {
-	withSelectProgram(t, func(model tea.Model, ctx context.Context) programRunner {
-		selector, ok := model.(fileSelectModel)
-		if !ok {
-			t.Fatalf("model type = %T, want fileSelectModel", model)
-		}
-		if selector.list.Index() != 0 {
-			t.Fatalf("Index() = %d, want 0", selector.list.Index())
-		}
-		return stubProgram{model: fileSelectModel{selected: "a.txt"}}
-	}, func() {
-		selected, err := SelectFile(context.Background(), []FileCandidate{
-			{Path: "a.txt", Resolved: true},
-			{Path: "b.txt", Resolved: true},
-		})
-		if err != nil {
-			t.Fatalf("SelectFile error = %v", err)
-		}
-		if selected != "a.txt" {
-			t.Fatalf("SelectFile = %q, want a.txt", selected)
-		}
-	})
-}
-
-func TestSelectFileReturnsProgramError(t *testing.T) {
+func TestSelectWorkspaceReturnsProgramError(t *testing.T) {
 	withSelectProgram(t, func(model tea.Model, ctx context.Context) programRunner {
 		return stubProgram{err: errors.New("boom")}
 	}, func() {
-		_, err := SelectFile(context.Background(), []FileCandidate{{Path: "picked.txt"}})
+		_, err := SelectWorkspace(context.Background(), nil, []gitutil.DiffSource{gitutil.WorkingTreeSource()})
 		if err == nil {
-			t.Fatalf("SelectFile error = nil, want error")
+			t.Fatalf("SelectWorkspace error = nil, want error")
 		}
 	})
 }
