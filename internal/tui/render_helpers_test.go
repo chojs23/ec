@@ -1,23 +1,12 @@
 package tui
 
 import (
-	"fmt"
+	"slices"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
 	"github.com/chojs23/ec/internal/markers"
 )
-
-func TestConnectorForResult(t *testing.T) {
-	if got := connectorForResult(true, false); got != "v" {
-		t.Fatalf("connectorForResult(resolved=true) = %q, want v", got)
-	}
-	if got := connectorForResult(false, true); got != "|" {
-		t.Fatalf("connectorForResult(selected=true) = %q, want |", got)
-	}
-	if got := connectorForResult(false, false); got != " " {
-		t.Fatalf("connectorForResult(default) = %q, want space", got)
-	}
-}
 
 func TestBuildResultLinesManualResolved(t *testing.T) {
 	input := []byte("start\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\nend\n")
@@ -32,16 +21,139 @@ func TestBuildResultLinesManualResolved(t *testing.T) {
 	}
 	found := false
 	for _, line := range lines {
-		if line.category == categoryResolved {
+		if line.text == "manual" {
 			found = true
-			if line.connector != "v" {
-				t.Fatalf("connector = %q, want v", line.connector)
+			if line.synthetic || line.category != categoryDefault {
+				t.Fatalf("manual content without a base must stay plain source: %+v", line)
 			}
-			break
 		}
 	}
 	if !found {
-		t.Fatalf("expected resolved lines")
+		t.Fatal("expected manual result content")
+	}
+}
+
+func TestConflictRenderingDistinguishesMissingAndEmptyBase(t *testing.T) {
+	for _, tc := range []struct {
+		name, label string
+		category    lineCategory
+	}{
+		{name: "missing base stays neutral", category: categoryDefault},
+		{name: "known empty base shows additions", label: "base", category: categoryAdded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seg := markers.ConflictSegment{BaseLabel: tc.label, Ours: []byte("ours\n"), Theirs: []byte("theirs\n")}
+			ours, theirs := conflictEntries(seg)
+			for _, entries := range [][]lineEntry{ours, theirs} {
+				if len(entries) != 1 || entries[0].category != tc.category {
+					t.Fatalf("source should contain one row with category %v, got %+v", tc.category, entries)
+				}
+			}
+			doc := markers.Document{Segments: []markers.Segment{seg}, Conflicts: []markers.ConflictRef{{SegmentIndex: 0}}}
+			result, _ := buildResultLines(doc, 0, selectedOurs, nil, nil)
+			if len(result) != 3 || result[1].category != tc.category {
+				t.Fatalf("result must use the same base state as source panes: %+v", result)
+			}
+			m := newModelForDoc(t, doc)
+			// Empty-file range mismatches use the document fallback in every pane.
+			m.useFullDiff = true
+			m.conflictRanges = nil
+			m.updateViewports()
+			for _, styles := range [][]lipgloss.Style{m.oursLineStyles, m.theirsLineStyles, m.resultLineStyles} {
+				want := resultLineStyle.GetBackground()
+				if tc.category == categoryAdded {
+					want = addedLineStyle.GetBackground()
+				}
+				if len(styles) != 3 || styles[1].GetBackground() != want {
+					t.Fatal("full-file fallback lost the base-state row color")
+				}
+			}
+		})
+	}
+}
+
+func TestEmptyConflictSideHasNoFakeSourceLine(t *testing.T) {
+	for _, base := range []string{"", "base\n"} {
+		t.Run(base, func(t *testing.T) {
+			doc := markers.Document{
+				Segments:  []markers.Segment{markers.ConflictSegment{Base: []byte(base), Theirs: []byte("theirs\n")}},
+				Conflicts: []markers.ConflictRef{{SegmentIndex: 0}},
+			}
+			lines, _ := buildPaneLinesFromDoc(doc, paneOurs, 0, selectedOurs)
+			if lines[0].text != "Conflict 1" || lines[len(lines)-1].text != "End conflict 1" {
+				t.Fatalf("empty side needs block boundaries: %+v", lines)
+			}
+			for _, line := range lines {
+				if !line.synthetic && line.category != categoryRemoved {
+					t.Fatalf("empty side must not invent current source: %+v", line)
+				}
+			}
+		})
+	}
+}
+
+func TestResultBlockContentMatchesResolution(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		ours       string
+		resolution markers.Resolution
+		manual     map[int][]byte
+		want       string
+	}{
+		{name: "preview", ours: "ours\n", want: "ours\n"},
+		{name: "empty preview"},
+		{name: "applied empty side", resolution: markers.ResolutionOurs},
+		{name: "applied theirs", resolution: markers.ResolutionTheirs, want: "theirs\n"},
+		{name: "applied none", ours: "ours\n", resolution: markers.ResolutionNone},
+		{name: "manual", manual: map[int][]byte{0: []byte("manual\n")}, want: "manual\n"},
+		{name: "manual empty", manual: map[int][]byte{0: nil}},
+		{name: "both without trailing newline", ours: "ours", resolution: markers.ResolutionBoth, want: "ourstheirs\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			seg := markers.ConflictSegment{Base: []byte("base\n"), Ours: []byte(tc.ours), Theirs: []byte("theirs\n"), Resolution: tc.resolution}
+			doc := markers.Document{Segments: []markers.Segment{seg}, Conflicts: []markers.ConflictRef{{SegmentIndex: 0}}}
+			fallback, _ := buildResultLines(doc, 0, selectedOurs, tc.manual, nil)
+			preview, forced, ranges := buildResultPreviewLines(doc, selectedOurs, tc.manual, 0, nil)
+			full, _ := buildResultLinesFromEntries(diffEntries(splitLogicalLines(seg.Base), preview), ranges, 0, forced)
+			for _, lines := range [][]lineInfo{fallback, full} {
+				if lines[0].text != "Conflict 1" || lines[len(lines)-1].text != "End conflict 1" {
+					t.Fatalf("result needs block boundaries: %+v", lines)
+				}
+				var content []string
+				for _, line := range lines {
+					if !line.synthetic {
+						content = append(content, line.text)
+					}
+				}
+				if !slices.Equal(content, splitLogicalLines([]byte(tc.want))) {
+					t.Fatalf("result content = %q, want %q", content, tc.want)
+				}
+				if tc.want == "" && (len(lines) != 3 || !lines[1].synthetic) {
+					t.Fatalf("empty result needs an unnumbered placeholder: %+v", lines)
+				}
+			}
+		})
+	}
+}
+
+func TestResultKeepsManualBoundaryText(t *testing.T) {
+	seg := markers.ConflictSegment{Base: []byte("base\n"), Ours: []byte("ours\n"), Theirs: []byte("theirs\n")}
+	doc := markers.Document{Segments: []markers.Segment{seg}, Conflicts: []markers.ConflictRef{{SegmentIndex: 0}}}
+	manual := map[int][]byte{0: []byte("manual\n")}
+	boundaries := [][]byte{[]byte("before\n"), []byte("after\n")}
+	fallback, _ := buildResultLines(doc, 0, selectedOurs, manual, boundaries)
+	preview, forced, ranges := buildResultPreviewLines(doc, selectedOurs, manual, 0, boundaries)
+	full, _ := buildResultLinesFromEntries(diffEntries(splitLogicalLines(seg.Base), preview), ranges, 0, forced)
+	for _, lines := range [][]lineInfo{fallback, full} {
+		var content []string
+		for _, line := range lines {
+			if !line.synthetic {
+				content = append(content, line.text)
+			}
+		}
+		if !slices.Equal(content, []string{"before", "manual", "after"}) {
+			t.Fatalf("result must keep text around manual resolution: %q", content)
+		}
 	}
 }
 
@@ -56,10 +168,10 @@ func TestBuildResultLinesSkipsEmptyBoundarySlots(t *testing.T) {
 	}
 
 	lines, _ := buildResultLines(doc, 0, selectedTheirs, nil, make([][]byte, len(doc.Segments)+1))
-	if len(lines) != 3 {
-		t.Fatalf("lines len = %d, want 3", len(lines))
+	if len(lines) != 5 {
+		t.Fatalf("lines len = %d, want 5", len(lines))
 	}
-	if lines[0].text != "start" || lines[1].text != "theirs" || lines[2].text != "end" {
+	if lines[0].text != "start" || lines[2].text != "theirs" || lines[4].text != "end" {
 		t.Fatalf("lines = %+v", lines)
 	}
 }
@@ -92,20 +204,6 @@ func TestDiffEntriesCategories(t *testing.T) {
 	}
 }
 
-func TestMarkConflictedInRanges(t *testing.T) {
-	ours := []lineEntry{{text: "same", category: categoryDefault, baseIndex: 0}, {text: "ours", category: categoryDefault, baseIndex: 1}}
-	theirs := []lineEntry{{text: "same", category: categoryDefault, baseIndex: 0}, {text: "theirs", category: categoryDefault, baseIndex: 1}}
-	ranges := []conflictRange{{baseStart: 0, baseEnd: 1}}
-
-	markConflictedInRanges(&ours, &theirs, ranges)
-	if ours[0].category != categoryDefault || theirs[0].category != categoryDefault {
-		t.Fatalf("unexpected conflict marking for base index 0")
-	}
-	if ours[1].category != categoryDefault || theirs[1].category != categoryDefault {
-		t.Fatalf("unexpected conflict marking outside range")
-	}
-}
-
 func TestBuildPaneLinesFromEntriesMarkers(t *testing.T) {
 	data := []byte("start\n<<<<<<< HEAD\nours\n||||||| base\nbase\n=======\ntheirs\n>>>>>>> branch\nend\n")
 	doc, err := markers.Parse(data)
@@ -129,9 +227,9 @@ func TestBuildPaneLinesFromEntriesMarkers(t *testing.T) {
 	foundEnd := false
 	for _, line := range lines {
 		switch line.text {
-		case ">> selected hunk start (ours) >>":
+		case "Conflict 1":
 			foundStart = line.category == categoryInsertMarker && line.selected
-		case ">> selected hunk end >>":
+		case "End conflict 1":
 			foundEnd = line.category == categoryInsertMarker && line.selected
 		}
 	}
@@ -173,7 +271,7 @@ func TestBuildPaneLinesFromEntriesUsesSideRangeForNonRemoved(t *testing.T) {
 
 	startIdx := -1
 	for i, line := range lines {
-		if line.text == ">> selected hunk start (ours) >>" {
+		if line.text == "Conflict 1" {
 			startIdx = i
 			break
 		}
@@ -366,14 +464,14 @@ func TestBuildPaneLinesFromEntriesAnchorsEmptySideAtInsertionPoint(t *testing.T)
 				t.Fatalf("lines len = %d, want %d", len(lines), tt.wantLineCount)
 			}
 
-			startMarker := fmt.Sprintf(">> selected hunk start (%s) >>", sideLabel(tt.selectedPane))
+			startMarker := "Conflict 1"
 			if lines[tt.wantMarkerIndex].text != startMarker {
 				t.Fatalf("lines[%d].text = %q, want %q", tt.wantMarkerIndex, lines[tt.wantMarkerIndex].text, startMarker)
 			}
 			if !lines[tt.wantMarkerIndex].selected {
 				t.Fatalf("start marker should be selected: %+v", lines[tt.wantMarkerIndex])
 			}
-			if lines[tt.wantMarkerIndex+1].text != ">> selected hunk end >>" {
+			if lines[tt.wantMarkerIndex+1].text != "End conflict 1" {
 				t.Fatalf("lines[%d].text = %q", tt.wantMarkerIndex+1, lines[tt.wantMarkerIndex+1].text)
 			}
 			if !lines[tt.wantMarkerIndex+1].selected {
@@ -392,21 +490,18 @@ func TestBuildPaneLinesFromEntriesAnchorsEmptySideAtInsertionPoint(t *testing.T)
 	}
 }
 
-func TestBuildResultLinesFromEntriesUnresolvedRange(t *testing.T) {
+func TestBuildResultLinesFromEntriesPreservesChangesInUnresolvedRange(t *testing.T) {
 	entries := []lineEntry{{text: "ours", category: categoryAdded, baseIndex: -1}}
 	ranges := []resultRange{{start: 0, end: 1, resolved: false}}
-	lines, _ := buildResultLinesFromEntries(entries, ranges, 0, map[int]lineCategory{})
-	if len(lines) != 1 {
-		t.Fatalf("lines len = %d, want 1", len(lines))
+	lines, start := buildResultLinesFromEntries(entries, ranges, 0, map[int]lineCategory{})
+	if len(lines) != 3 || start != 0 {
+		t.Fatalf("result should include current block boundaries: %+v, start %d", lines, start)
 	}
-	if lines[0].category != categoryConflicted {
-		t.Fatalf("category = %v, want conflicted", lines[0].category)
+	if lines[1].category != categoryAdded || !lines[1].selected {
+		t.Fatalf("result should retain its addition category: %+v", lines[1])
 	}
-	if !lines[0].dim {
-		t.Fatalf("expected dim line for unresolved range")
-	}
-	if lines[0].connector != "|" {
-		t.Fatalf("connector = %q, want |", lines[0].connector)
+	if lines[0].text != "Conflict 1" || lines[2].text != "End conflict 1" {
+		t.Fatalf("result block is not clearly labeled: %+v", lines)
 	}
 }
 
@@ -499,13 +594,13 @@ func TestBuildResultPreviewLinesManualAndNone(t *testing.T) {
 	if lines[2] != "middle" {
 		t.Fatalf("middle line = %q, want middle", lines[2])
 	}
-	if lines[3] != "[resolved: none]" {
-		t.Fatalf("resolved-none marker line = %q, want [resolved: none]", lines[3])
+	if lines[3] != "Empty result" {
+		t.Fatalf("resolved-none marker line = %q, want Empty result", lines[3])
 	}
 	if lines[4] != "end" {
 		t.Fatalf("end line = %q, want end", lines[4])
 	}
-	if forced[3] != categoryResolved {
+	if forced[3] != categoryInsertMarker {
 		t.Fatalf("forced category = %v, want resolved", forced[3])
 	}
 	if len(ranges) != 2 {

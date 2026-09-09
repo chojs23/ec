@@ -532,7 +532,7 @@ func TestDiffViewerQuitReturnsToSelector(t *testing.T) {
 
 func TestRenderDiffPatchKeepsPatchContent(t *testing.T) {
 	patch := "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1 +1 @@\n-old\n+new\x1b[2J\n context\n"
-	rendered := renderDiffPatch(patch)
+	rendered := diffLinesText(renderDiffPatch(patch, "a", "a").unified)
 	for _, line := range []string{"diff --git a/a b/a", "--- a/a", "+++ b/a", "@@ -1 +1 @@", "-old", "+new", " context"} {
 		if !strings.Contains(rendered, line) {
 			t.Fatalf("rendered patch missing %q: %q", line, rendered)
@@ -546,24 +546,31 @@ func TestRenderDiffPatchKeepsPatchContent(t *testing.T) {
 func TestSplitDiffPatchAlignsRemovedAndAddedLines(t *testing.T) {
 	patch := "diff --git a/a b/a\n--- a/a\n+++ b/a\n@@ -1,4 +1,3 @@\n same\n-old one\n-old two\n+new one\n tail\n"
 	rows := parseSplitDiffRows(patch)
+	lines := strings.Split(strings.TrimSuffix(patch, "\n"), "\n")
+	text := func(index int) string {
+		if index < 0 {
+			return ""
+		}
+		return lines[index]
+	}
 
 	firstChange := -1
 	for index, row := range rows {
-		if row.before == "-old one" {
+		if text(row.beforeIndex) == "-old one" {
 			firstChange = index
 			break
 		}
 	}
-	if firstChange < 0 || rows[firstChange].after != "+new one" {
+	if firstChange < 0 || text(rows[firstChange].afterIndex) != "+new one" {
 		t.Fatalf("rows = %#v, want first removed and added lines aligned", rows)
 	}
-	if rows[1].before != "--- a/a" || rows[1].after != "+++ b/a" {
+	if text(rows[1].beforeIndex) != "--- a/a" || text(rows[1].afterIndex) != "+++ b/a" {
 		t.Fatalf("file header row = %#v, want old and new paths aligned", rows[1])
 	}
-	if rows[firstChange+1].before != "-old two" || rows[firstChange+1].after != "" {
+	if text(rows[firstChange+1].beforeIndex) != "-old two" || text(rows[firstChange+1].afterIndex) != "" {
 		t.Fatalf("second change row = %#v, want removed line and blank", rows[firstChange+1])
 	}
-	if rows[firstChange+2].before != " tail" || rows[firstChange+2].after != " tail" {
+	if text(rows[firstChange+2].beforeIndex) != " tail" || text(rows[firstChange+2].afterIndex) != " tail" {
 		t.Fatalf("context row = %#v, want shared context", rows[firstChange+2])
 	}
 }

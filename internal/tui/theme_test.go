@@ -77,6 +77,12 @@ func TestDefaultThemeUsesDistinctPaneAndDiffColors(t *testing.T) {
 	if theme.SelectedPaneBorder != "117" || theme.SelectedSideBorder != "117" {
 		t.Fatalf("selected borders = %q and %q, want light blue", theme.SelectedPaneBorder, theme.SelectedSideBorder)
 	}
+	if theme.ResultResolvedBorder != theme.PaneBorder || theme.ResultUnresolvedBorder != theme.PaneBorder {
+		t.Fatalf("result borders = %q and %q, want neutral pane border %q", theme.ResultResolvedBorder, theme.ResultUnresolvedBorder, theme.PaneBorder)
+	}
+	if theme.SelectedHunkMarkerFg != "117" || theme.SelectedHunkMarkerBg != theme.HeaderBg {
+		t.Fatalf("active block marker = %q on %q, want light blue on neutral chrome", theme.SelectedHunkMarkerFg, theme.SelectedHunkMarkerBg)
+	}
 	if theme.AddedFg != "#7ee787" || theme.AddedBg != "#0d4429" {
 		t.Fatalf("added colors = %q on %q, want GitHub-style green", theme.AddedFg, theme.AddedBg)
 	}

@@ -279,17 +279,14 @@ Float option notes:
 
 The resolver shows three panes in one view.
 
-Conflicts are shown as focused blocks. The center pane is the output that will be written to the merged file.
+The header shows the current conflict and how many remain unresolved. A fixed
+state strip separates selection from the applied result, even when pane titles are narrow:
 
-You can move between conflicts, choose a side, and apply it. The status line shows which conflict you are on and whether it is resolved.
+The center pane shows the result, with an explicit state for the current block:
+
+Applied does not mean saved. Press `w` or `ctrl+s` to write the result.
 
 Use `e` to open $EDITOR with the current result. When you exit the editor, the resolver reloads the merged file and keeps manual edits.
-
-Blue: modified lines (changed vs base)
-
-Green: added lines
-
-Red: conflicted lines where both sides differ
 
 ## Key bindings
 
@@ -345,9 +342,9 @@ Example:
       "header_bg": "94",
       "header_fg": "230",
       "added_bg": "58",
-      "conflicted_bg": "88",
+      "removed_bg": "88",
       "result_fg": "#f1f1f1",
-      "modified_bg": "#2f5f7a"
+      "selected_side_border": "#79c0ff"
     }
   }
 }
@@ -356,6 +353,15 @@ Example:
 Missing keys fall back to the built-in defaults.
 The diff viewer uses `selected_side_border` for its focused pane so selection
 matches the conflict resolver.
+Both screens use `added_bg` and `removed_bg` behind syntax-colored code.
+The resolver uses `selected_hunk_marker_fg` and `selected_hunk_marker_bg` for
+the current block labels and `pane_border` for the result border.
+Unresolved block labels use `selector_unresolved_fg`, sharing the selector's
+red unresolved color. Pending preview text keeps `status_unresolved_fg`.
+
+Legacy line-highlight, per-line conflict, dimming, result-border, and connector
+keys remain accepted for old theme files, but no longer control resolver code
+rows or its result border. Use the keys above for the current resolver layout.
 
 Hex colors require a TrueColor-capable terminal to avoid 256-color downsampling.
 
@@ -407,14 +413,14 @@ Supported keys:
 | `conflicted_bg`             | `131`     |
 | `conflicted_fg`             | `231`     |
 | `insert_marker_fg`          | `196`     |
-| `selected_hunk_marker_fg`   | `226`     |
-| `selected_hunk_marker_bg`   | `88`      |
+| `selected_hunk_marker_fg`   | `117`     |
+| `selected_hunk_marker_bg`   | `#161b22` |
 | `selected_hunk_bg`          | `236`     |
 | `status_resolved_fg`        | `42`      |
-| `status_unresolved_fg`      | `196`     |
+| `status_unresolved_fg`      | `#d29922` |
 | `result_resolved_marker_fg` | `42`      |
-| `result_resolved_border`    | `42`      |
-| `result_unresolved_border`  | `196`     |
+| `result_resolved_border`    | `245`     |
+| `result_unresolved_border`  | `245`     |
 | `toast_bg`                  | `22`      |
 | `toast_fg`                  | `230`     |
 | `selector_resolved_fg`      | `42`      |

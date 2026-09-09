@@ -64,6 +64,7 @@ type diffModel struct {
 	fileXOffset     int
 	patchCache      map[string][]byte
 	patchText       string
+	renderedPatch   diffRenderedPatch
 	deletions       int
 	additions       int
 	viewportPatch   viewport.Model
@@ -318,12 +319,12 @@ func (m diffModel) View() string {
 	diffStyle := diffPaneStyle(m.focus == diffFocusContent)
 	if m.viewMode == diffViewUnified {
 		panes = append(panes, diffStyle.Render(
-			m.renderDiffPaneTitle(m.selectedFileTitle(), layout.unified)+"\n"+m.viewportPatch.View(),
+			m.renderDiffPaneTitle(m.selectedFileTitle(), layout.unified)+"\n"+renderDiffViewport(m.viewportPatch, m.renderedPatch.unified, diffNumbersBoth, layout.unified),
 		))
 	} else {
 		panes = append(panes,
-			diffStyle.Render(m.renderDiffPaneTitle(m.beforeTitle(), layout.before)+"\n"+m.viewportBefore.View()),
-			diffStyle.Render(m.renderDiffPaneTitle(m.afterTitle(), layout.after)+"\n"+m.viewportAfter.View()),
+			diffStyle.Render(m.renderDiffPaneTitle(m.beforeTitle(), layout.before)+"\n"+renderDiffViewport(m.viewportBefore, m.renderedPatch.before, diffNumbersOld, layout.before)),
+			diffStyle.Render(m.renderDiffPaneTitle(m.afterTitle(), layout.after)+"\n"+renderDiffViewport(m.viewportAfter, m.renderedPatch.after, diffNumbersNew, layout.after)),
 		)
 	}
 
@@ -440,11 +441,11 @@ func (m *diffModel) resizeViewports() {
 	if m.explorerVisible {
 		m.explorerWidth = layout.explorer
 	}
-	m.viewportPatch.Width = layout.unified
+	m.viewportPatch.Width = max(layout.unified-diffGutterWidth(m.renderedPatch.unified, diffNumbersBoth, layout.unified), 1)
 	m.viewportPatch.Height = height
-	m.viewportBefore.Width = layout.before
+	m.viewportBefore.Width = max(layout.before-diffGutterWidth(m.renderedPatch.before, diffNumbersOld, layout.before), 1)
 	m.viewportBefore.Height = height
-	m.viewportAfter.Width = layout.after
+	m.viewportAfter.Width = max(layout.after-diffGutterWidth(m.renderedPatch.after, diffNumbersNew, layout.after), 1)
 	m.viewportAfter.Height = height
 	m.ensureFileVisible()
 	m.clampExplorerXOffset(layout.explorer)
@@ -502,21 +503,29 @@ func (m *diffModel) setPatch(patch []byte) {
 
 	rawPatch := string(patch)
 	m.deletions, m.additions = countDiffChanges(rawPatch)
-	m.patchText = renderDiffPatch(rawPatch)
-	before, after := renderSplitDiffPatch(rawPatch)
-	m.viewportPatch.SetContent(m.patchText)
-	m.viewportBefore.SetContent(before)
-	m.viewportAfter.SetContent(after)
+	file, _ := m.selectedFile()
+	oldPath := file.OldPath
+	if oldPath == "" {
+		oldPath = file.Path
+	}
+	m.renderedPatch = renderDiffPatch(rawPatch, oldPath, file.Path)
+	m.patchText = diffLinesText(m.renderedPatch.unified)
+	m.viewportPatch.SetContent(diffViewportText(m.renderedPatch.unified))
+	m.viewportBefore.SetContent(diffViewportText(m.renderedPatch.before))
+	m.viewportAfter.SetContent(diffViewportText(m.renderedPatch.after))
+	m.resizeViewports()
 	m.resetDiffScroll()
 }
 
 func (m *diffModel) setDiffText(text string) {
+	m.renderedPatch = diffRenderedPatch{}
 	m.patchText = text
 	m.deletions = 0
 	m.additions = 0
 	m.viewportPatch.SetContent(text)
 	m.viewportBefore.SetContent(text)
 	m.viewportAfter.SetContent(text)
+	m.resizeViewports()
 	m.resetDiffScroll()
 }
 
@@ -822,34 +831,6 @@ func diffSourceTitle(source gitutil.DiffSource) string {
 		return sanitizeTerminalText(source.ShortHash)
 	}
 	return sanitizeTerminalText(strings.TrimSpace(source.ShortHash + " " + source.Subject))
-}
-
-func renderDiffPatch(patch string) string {
-	lines := strings.Split(strings.TrimSuffix(patch, "\n"), "\n")
-	for index, line := range lines {
-		line = sanitizeTerminalText(line)
-		switch {
-		case strings.HasPrefix(line, "diff --git "),
-			strings.HasPrefix(line, "index "),
-			strings.HasPrefix(line, "new file mode "),
-			strings.HasPrefix(line, "deleted file mode "),
-			strings.HasPrefix(line, "similarity index "),
-			strings.HasPrefix(line, "rename from "),
-			strings.HasPrefix(line, "rename to "),
-			strings.HasPrefix(line, "--- "),
-			strings.HasPrefix(line, "+++ "):
-			lines[index] = lineNumberStyle.Copy().Bold(true).Render(line)
-		case strings.HasPrefix(line, "@@"):
-			lines[index] = diffHunkStyle.Render(line)
-		case strings.HasPrefix(line, "+"):
-			lines[index] = addedLineStyle.Render(line)
-		case strings.HasPrefix(line, "-"):
-			lines[index] = removedLineStyle.Render(line)
-		default:
-			lines[index] = resultLineStyle.Render(line)
-		}
-	}
-	return strings.Join(lines, "\n")
 }
 
 func countDiffChanges(patch string) (deletions int, additions int) {

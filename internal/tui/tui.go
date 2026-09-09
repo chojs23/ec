@@ -188,6 +188,12 @@ type model struct {
 	viewportOurs     viewport.Model
 	viewportResult   viewport.Model
 	viewportTheirs   viewport.Model
+	oursLineStyles   []lipgloss.Style
+	resultLineStyles []lipgloss.Style
+	theirsLineStyles []lipgloss.Style
+	oursSyntax       conflictSyntaxCache
+	resultSyntax     conflictSyntaxCache
+	theirsSyntax     conflictSyntaxCache
 	ready            bool
 	width            int
 	height           int
@@ -649,10 +655,7 @@ func (m model) View() string {
 		return "\n  Resolved! File written.\n"
 	}
 
-	// Header
-	fileName := m.opts.MergedPath
-	conflictStatus := fmt.Sprintf("Conflict %d/%d", m.currentConflict+1, len(m.doc.Conflicts))
-	header := headerStyle.Render(fmt.Sprintf("%s - %s", fileName, conflictStatus))
+	header := m.renderResolverHeader(m.width)
 
 	// Get current conflict
 	if m.currentConflict >= len(m.doc.Conflicts) {
@@ -660,19 +663,15 @@ func (m model) View() string {
 	}
 
 	ref := m.doc.Conflicts[m.currentConflict]
-	seg, ok := m.doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+	_, ok := m.doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
 	if !ok {
 		return "\n  Internal error: invalid conflict segment.\n"
 	}
 
-	// Resolution status
-	statusText := "Unresolved"
+	statusText := m.resultStatusText()
+	hunkState := m.currentHunkState()
 	statusStyle := statusUnresolvedStyle
-	if _, ok := m.manualResolved[m.currentConflict]; ok {
-		statusText = "Resolved (manual)"
-		statusStyle = statusResolvedStyle
-	} else if seg.Resolution != markers.ResolutionUnset {
-		statusText = fmt.Sprintf("Resolved: %s", seg.Resolution)
+	if hunkState.applied != "" {
 		statusStyle = statusResolvedStyle
 	}
 
@@ -681,40 +680,42 @@ func (m model) View() string {
 	if m.selectedSide == selectedOurs {
 		oursStyle = selectedSidePaneStyle
 	}
-	oursTitle := "OURS"
+	oursLabel := ""
 	if m.currentConflict < len(m.mergedLabels) {
-		if label := formatLabel(m.mergedLabels[m.currentConflict].OursLabel); label != "" {
-			oursTitle = fmt.Sprintf("OURS (%s)", label)
-		}
+		oursLabel = formatLabel(m.mergedLabels[m.currentConflict].OursLabel)
+	}
+	oursTitle := sourcePaneTitle("OURS", m.selectedSide == selectedOurs, oursLabel)
+	oursTitleStyle := titleStyle
+	if m.selectedSide == selectedOurs {
+		oursTitleStyle = titleStyle.Foreground(selectedSidePaneStyle.GetBorderTopForeground()).Bold(true)
 	}
 	oursPane := oursStyle.Render(
-		renderPaneTitle(oursTitle, m.viewportOurs.Width, titleStyle) + "\n" +
-			m.viewportOurs.View(),
+		renderPaneTitle(oursTitle, m.viewportOurs.Width, oursTitleStyle) + "\n" +
+			renderConflictViewport(m.viewportOurs, m.oursLineStyles),
 	)
 
-	resultStyle := resultUnresolvedPaneStyle
-	if allResolved(m.doc, m.manualResolved) {
-		resultStyle = resultResolvedPaneStyle
-	}
 	resultTitle := renderResultPaneTitle(statusText, m.viewportResult.Width, resultTitleStyle, statusStyle)
-	resultPane := resultStyle.Render(
+	resultPane := paneStyle.Render(
 		resultTitle + "\n" +
-			m.viewportResult.View(),
+			renderConflictViewport(m.viewportResult, m.resultLineStyles),
 	)
 
 	theirsStyle := theirsPaneStyle
 	if m.selectedSide == selectedTheirs {
 		theirsStyle = selectedSidePaneStyle
 	}
-	theirsTitle := "THEIRS"
+	theirsLabel := ""
 	if m.currentConflict < len(m.mergedLabels) {
-		if label := formatLabel(m.mergedLabels[m.currentConflict].TheirsLabel); label != "" {
-			theirsTitle = fmt.Sprintf("THEIRS (%s)", label)
-		}
+		theirsLabel = formatLabel(m.mergedLabels[m.currentConflict].TheirsLabel)
+	}
+	theirsTitle := sourcePaneTitle("THEIRS", m.selectedSide == selectedTheirs, theirsLabel)
+	theirsTitleStyle := titleStyle
+	if m.selectedSide == selectedTheirs {
+		theirsTitleStyle = titleStyle.Foreground(selectedSidePaneStyle.GetBorderTopForeground()).Bold(true)
 	}
 	theirsPane := theirsStyle.Render(
-		renderPaneTitle(theirsTitle, m.viewportTheirs.Width, titleStyle) + "\n" +
-			m.viewportTheirs.View(),
+		renderPaneTitle(theirsTitle, m.viewportTheirs.Width, theirsTitleStyle) + "\n" +
+			renderConflictViewport(m.viewportTheirs, m.theirsLineStyles),
 	)
 
 	panes := lipgloss.JoinHorizontal(lipgloss.Top, oursPane, resultPane, theirsPane)
@@ -724,7 +725,7 @@ func (m model) View() string {
 	)
 	footer := lipgloss.JoinVertical(lipgloss.Left, footerText, m.renderToastLine())
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, panes, footer)
+	return lipgloss.JoinVertical(lipgloss.Left, header, m.renderResolverState(m.width), panes, footer)
 }
 
 func (m model) renderToastLine() string {
@@ -749,7 +750,6 @@ func (m model) resolverFooterText() string {
 
 func (m model) resolverViewportHeight() int {
 	const (
-		headerHeight    = 1
 		paneTitleHeight = 1
 		paneFrameHeight = 2
 	)
@@ -757,11 +757,55 @@ func (m model) resolverViewportHeight() int {
 	footerText := footerStyle.Width(m.width).Render(m.resolverFooterText())
 	footerHeight := lipgloss.Height(lipgloss.JoinVertical(lipgloss.Left, footerText, m.renderToastLine()))
 
+	headerHeight := lipgloss.Height(lipgloss.JoinVertical(lipgloss.Left, m.renderResolverHeader(m.width), m.renderResolverState(m.width)))
 	height := m.height - headerHeight - footerHeight - paneTitleHeight - paneFrameHeight
 	if height < 1 {
 		return 1
 	}
 	return height
+}
+
+func (m model) renderResolverHeader(width int) string {
+	fileName := filepath.Base(m.opts.MergedPath)
+	if fileName == "." || fileName == "" {
+		fileName = "conflict resolver"
+	}
+
+	status := "No conflicts"
+	if len(m.doc.Conflicts) > 0 {
+		current := m.currentConflict + 1
+		if current < 1 {
+			current = 1
+		}
+		if current > len(m.doc.Conflicts) {
+			current = len(m.doc.Conflicts)
+		}
+		status = fmt.Sprintf("Conflict %d of %d  %d remaining", current, len(m.doc.Conflicts), unresolvedConflictCount(m.doc, m.manualResolved))
+	}
+
+	text := status
+	if fileName != "conflict resolver" {
+		text += "  " + fileName
+	}
+	return renderPaneTitle(text, width, headerStyle)
+}
+
+func unresolvedConflictCount(doc markers.Document, manualResolved map[int][]byte) int {
+	remaining := 0
+	for index, ref := range doc.Conflicts {
+		if _, ok := manualResolved[index]; ok {
+			continue
+		}
+		if ref.SegmentIndex < 0 || ref.SegmentIndex >= len(doc.Segments) {
+			remaining++
+			continue
+		}
+		seg, ok := doc.Segments[ref.SegmentIndex].(markers.ConflictSegment)
+		if !ok || seg.Resolution == markers.ResolutionUnset {
+			remaining++
+		}
+	}
+	return remaining
 }
 
 func resolverFooterKeyMapText() string {
@@ -976,33 +1020,11 @@ func (m *model) updateViewports() {
 	if m.currentConflict >= len(m.doc.Conflicts) {
 		return
 	}
-
-	baseStyles := map[lineCategory]lipgloss.Style{
-		categoryDefault: resultLineStyle,
-	}
-
-	highlightStyles := map[lineCategory]lipgloss.Style{
-		categoryModified:     modifiedLineStyle,
-		categoryAdded:        addedLineStyle,
-		categoryRemoved:      removedLineStyle,
-		categoryConflicted:   conflictedLineStyle,
-		categoryInsertMarker: insertMarkerStyle,
-	}
-
-	selectedStyles := map[lineCategory]lipgloss.Style{
-		categoryDefault: resultLineStyle.Copy().Bold(true),
-	}
-	for category, style := range highlightStyles {
-		selectedStyles[category] = style.Copy().Bold(true)
-	}
-	selectedStyles[categoryInsertMarker] = selectedHunkMarkerStyle
-
-	connectorStyles := map[lineCategory]lipgloss.Style{
-		categoryDefault:  lineNumberStyle,
-		categoryResolved: resultResolvedMarkerStyle,
-	}
-	for category, style := range highlightStyles {
-		connectorStyles[category] = style
+	if m.ready {
+		height := m.resolverViewportHeight()
+		m.viewportOurs.Height = height
+		m.viewportResult.Height = height
+		m.viewportTheirs.Height = height
 	}
 
 	// Update ours pane (full file, highlight conflicts)
@@ -1018,22 +1040,29 @@ func (m *model) updateViewports() {
 	if useFullDiff {
 		oursEntries := diffEntries(m.baseLines, m.oursLines)
 		theirsEntries := diffEntries(m.baseLines, m.theirsLines)
-		markConflictedInRanges(&oursEntries, &theirsEntries, m.conflictRanges)
 		oursLines, oursStart = buildPaneLinesFromEntries(m.doc, paneOurs, m.currentConflict, m.selectedSide, oursEntries, m.conflictRanges)
 		theirsLines, theirsStart = buildPaneLinesFromEntries(m.doc, paneTheirs, m.currentConflict, m.selectedSide, theirsEntries, m.conflictRanges)
 	} else {
 		oursLines, oursStart = buildPaneLinesFromDoc(m.doc, paneOurs, m.currentConflict, m.selectedSide)
 		theirsLines, theirsStart = buildPaneLinesFromDoc(m.doc, paneTheirs, m.currentConflict, m.selectedSide)
 	}
-	oursContent := renderLines(oursLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles, false)
+	hunkState := m.currentHunkState()
+	if hunkState.selected == "OURS" {
+		setBlockPresentation(oursLines, blockSelected)
+	} else {
+		setBlockPresentation(theirsLines, blockSelected)
+	}
+	oursContent, oursStyles := renderLines(oursLines, m.opts.MergedPath, &m.oursSyntax)
 	m.viewportOurs.SetContent(oursContent)
+	m.oursLineStyles = oursStyles
 	if m.pendingScroll {
 		ensureVisible(&m.viewportOurs, oursStart, len(oursLines))
 	}
 
 	// Update theirs pane (full file, highlight conflicts)
-	theirsContent := renderLines(theirsLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles, false)
+	theirsContent, theirsStyles := renderLines(theirsLines, m.opts.MergedPath, &m.theirsSyntax)
 	m.viewportTheirs.SetContent(theirsContent)
+	m.theirsLineStyles = theirsStyles
 	if m.pendingScroll {
 		ensureVisible(&m.viewportTheirs, theirsStart, len(theirsLines))
 	}
@@ -1048,8 +1077,14 @@ func (m *model) updateViewports() {
 	} else {
 		resultLines, resultStart = buildResultLines(m.doc, m.currentConflict, m.selectedSide, m.manualResolved, m.resultBoundaries)
 	}
-	resultContent := renderLines(resultLines, lineNumberStyle, baseStyles, highlightStyles, selectedStyles, connectorStyles, true)
+	resultBlock := blockUnresolved
+	if hunkState.applied != "" {
+		resultBlock = blockResolved
+	}
+	setBlockPresentation(resultLines, resultBlock)
+	resultContent, resultStyles := renderLines(resultLines, m.opts.MergedPath, &m.resultSyntax)
 	m.viewportResult.SetContent(resultContent)
+	m.resultLineStyles = resultStyles
 	if m.pendingScroll {
 		ensureVisible(&m.viewportResult, resultStart, len(resultLines))
 	}
@@ -1224,10 +1259,20 @@ func renderPaneTitle(title string, paneWidth int, style lipgloss.Style) string {
 	return style.Render(trimmed)
 }
 
+func sourcePaneTitle(side string, selected bool, label string) string {
+	title := side
+	if selected {
+		title += " [selected]"
+	}
+	if label != "" {
+		title += fmt.Sprintf(" (%s)", label)
+	}
+	return title
+}
+
 func renderResultPaneTitle(statusText string, paneWidth int, titleStyle lipgloss.Style, statusStyle lipgloss.Style) string {
-	const prefix = "RESULT "
-	statusSegment := "(" + statusText + ")"
-	rawTitle := prefix + statusSegment
+	const prefix = "RESULT  "
+	rawTitle := prefix + statusText
 
 	if paneWidth <= 0 {
 		return ""

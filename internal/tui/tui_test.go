@@ -14,6 +14,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/chojs23/ec/internal/cli"
 	"github.com/chojs23/ec/internal/engine"
 	"github.com/chojs23/ec/internal/gitmerge"
@@ -978,8 +979,35 @@ func TestRenderPaneTitleHandlesVeryNarrowPane(t *testing.T) {
 	}
 }
 
+func TestSourcePaneTitlePrioritizesSelectionBeforeBranchLabel(t *testing.T) {
+	testCases := []struct {
+		name     string
+		side     string
+		selected bool
+		label    string
+		want     string
+	}{
+		{name: "selected with label", side: "OURS", selected: true, label: "HEAD", want: "OURS [selected] (HEAD)"},
+		{name: "not selected with label", side: "THEIRS", label: "feature", want: "THEIRS (feature)"},
+		{name: "selected without label", side: "OURS", selected: true, want: "OURS [selected]"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := sourcePaneTitle(tc.side, tc.selected, tc.label); got != tc.want {
+				t.Fatalf("sourcePaneTitle() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+
+	narrow := renderPaneTitle(sourcePaneTitle("OURS", true, "feature/very-long-branch"), 20, titleStyle)
+	if !strings.Contains(narrow, "OURS [selected]") || strings.Contains(narrow, "very-long-branch") {
+		t.Fatalf("narrow selected title should keep selection before optional label: %q", narrow)
+	}
+}
+
 func TestRenderResultPaneTitleFitsPaneWidth(t *testing.T) {
-	got := renderResultPaneTitle("Resolved (manual)", 18, resultTitleStyle, statusResolvedStyle)
+	got := renderResultPaneTitle("Applied: manual", 18, resultTitleStyle, statusResolvedStyle)
 	if lipgloss.Width(got) > 18 {
 		t.Fatalf("renderResultPaneTitle width = %d, want <= 18", lipgloss.Width(got))
 	}
@@ -989,9 +1017,100 @@ func TestRenderResultPaneTitleFitsPaneWidth(t *testing.T) {
 }
 
 func TestRenderResultPaneTitleKeepsStatusWhenWide(t *testing.T) {
-	got := renderResultPaneTitle("Unresolved", 50, resultTitleStyle, statusUnresolvedStyle)
-	if !strings.Contains(got, "RESULT (Unresolved)") {
+	got := renderResultPaneTitle("Preview: OURS, not applied", 50, resultTitleStyle, statusUnresolvedStyle)
+	if !strings.Contains(got, "RESULT  Preview: OURS, not applied") {
 		t.Fatalf("expected full result status title, got %q", got)
+	}
+}
+
+func TestResolverResultStatusDoesNotFollowFocusAfterApply(t *testing.T) {
+	doc := parseSingleConflictDoc(t)
+	m := newModelForDoc(t, doc)
+
+	if got := m.resultStatusText(); got != "Preview: OURS, not applied" {
+		t.Fatalf("initial result status = %q, want OURS preview", got)
+	}
+	if _, err := m.handleApplyOurs(); err != nil {
+		t.Fatalf("handleApplyOurs() error = %v", err)
+	}
+	if _, err := m.handleSelectTheirs(); err != nil {
+		t.Fatalf("handleSelectTheirs() error = %v", err)
+	}
+	if got := m.resultStatusText(); got != "Applied: OURS" {
+		t.Fatalf("result status after changing focus = %q, want applied OURS", got)
+	}
+	if _, err := m.handleUndo(); err != nil {
+		t.Fatalf("handleUndo() error = %v", err)
+	}
+	if got := m.resultStatusText(); got != "Preview: THEIRS, not applied" {
+		t.Fatalf("result status after undo = %q, want current-source preview", got)
+	}
+	if _, err := m.handleRedo(); err != nil {
+		t.Fatalf("handleRedo() error = %v", err)
+	}
+	if got := m.resultStatusText(); got != "Applied: OURS" {
+		t.Fatalf("result status after redo = %q, want applied OURS", got)
+	}
+}
+
+func TestResolverResultStatusCoversAppliedKinds(t *testing.T) {
+	testCases := []struct {
+		name       string
+		resolution markers.Resolution
+		manual     bool
+		want       string
+	}{
+		{name: "theirs", resolution: markers.ResolutionTheirs, want: "Applied: THEIRS"},
+		{name: "both", resolution: markers.ResolutionBoth, want: "Applied: BOTH"},
+		{name: "none", resolution: markers.ResolutionNone, want: "Applied: NONE"},
+		{name: "manual", manual: true, want: "Applied: manual"},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := parseSingleConflictDoc(t)
+			if tc.resolution != markers.ResolutionUnset {
+				setConflictResolution(t, &doc, 0, tc.resolution)
+			}
+			m := model{doc: doc, currentConflict: 0, selectedSide: selectedOurs, manualResolved: map[int][]byte{}}
+			if tc.manual {
+				m.manualResolved[0] = []byte("manual\n")
+			}
+			if got := m.resultStatusText(); got != tc.want {
+				t.Fatalf("resultStatusText() = %q, want %q", got, tc.want)
+			}
+			strip := ansi.Strip(m.renderResolverState(80))
+			applied := strings.ToUpper(strings.TrimPrefix(tc.want, "Applied: "))
+			if !strings.Contains(strip, "APPLIED: "+applied) || strings.Contains(strip, "HUNK:") {
+				t.Fatalf("state strip must agree with result title: %q", strip)
+			}
+		})
+	}
+}
+
+func TestResolverHeaderReportsRemainingConflictsAndFitsNarrowWidth(t *testing.T) {
+	doc := parseMultiConflictDoc(t)
+	setConflictResolution(t, &doc, 0, markers.ResolutionOurs)
+	m := model{
+		doc:             doc,
+		currentConflict: 1,
+		manualResolved:  map[int][]byte{},
+		opts:            cliOptionsWithMergedPath("very/long/path/to/merged.ts"),
+	}
+
+	wide := m.renderResolverHeader(80)
+	if !strings.Contains(wide, "Conflict 2 of 2") || !strings.Contains(wide, "1 remaining") {
+		t.Fatalf("header does not report position and remaining count: %q", wide)
+	}
+
+	narrow := m.renderResolverHeader(14)
+	if lipgloss.Width(narrow) > 14 {
+		t.Fatalf("narrow header width = %d, want <= 14", lipgloss.Width(narrow))
+	}
+
+	empty := model{doc: markers.Document{}, opts: cliOptionsWithMergedPath("merged.ts")}.renderResolverHeader(20)
+	if !strings.Contains(empty, "No conflicts") {
+		t.Fatalf("empty header = %q, want no-conflicts state", empty)
 	}
 }
 
@@ -1088,7 +1207,7 @@ func TestModelViewReady(t *testing.T) {
 	m.updateViewports()
 
 	view := m.View()
-	if !strings.Contains(view, "Conflict 1/1") {
+	if !strings.Contains(view, "Conflict 1 of 1") || !strings.Contains(view, "1 remaining") {
 		t.Fatalf("expected conflict status in view")
 	}
 	if !strings.Contains(view, "RESULT") {
@@ -1144,8 +1263,8 @@ func TestModelViewShowsBranchLabels(t *testing.T) {
 	m.updateViewports()
 
 	view := m.View()
-	if !strings.Contains(view, "OURS (HEAD)") {
-		t.Fatalf("expected OURS (HEAD) in view, got:\n%s", view)
+	if !strings.Contains(view, "OURS [selected] (HEAD)") {
+		t.Fatalf("expected selected OURS label in view, got:\n%s", view)
 	}
 	if !strings.Contains(view, "THEIRS (feature/add-auth)") {
 		t.Fatalf("expected THEIRS (feature/add-auth) in view, got:\n%s", view)
