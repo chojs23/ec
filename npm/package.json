@@ -1,6 +1,6 @@
 {
   "name": "@chojs23/ec",
-  "version": "0.3.3",
+  "version": "0.4.1",
   "description": "Terminal Git mergetool with a 3-way TUI and Neovim integration",
   "bin": {
     "ec": "bin/ec.js"
