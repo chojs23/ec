@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -311,22 +312,114 @@ func TestDiffViewerHorizontalInputScrollsWithoutChangingFocus(t *testing.T) {
 	}
 }
 
-func TestDiffViewerCapsExplorerWidthToKeepSplitPanesUsable(t *testing.T) {
-	model := newDiffModel(
-		context.Background(),
-		"/repo",
-		gitutil.WorkingTreeSource(),
-		[]gitutil.DiffFile{{Path: "file.txt", Status: "M"}},
-	)
-	updated, _ := model.Update(tea.WindowSizeMsg{Width: 100, Height: 18})
-	model = updated.(diffModel)
-	for range 100 {
-		updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true})
-		model = updated.(diffModel)
+func TestDiffViewerCapsExplorerWidthAtHalfTerminal(t *testing.T) {
+	for name, mode := range map[string]diffViewMode{"split": diffViewSplit, "unified": diffViewUnified} {
+		t.Run(name, func(t *testing.T) {
+			model := newDiffModel(context.Background(), "/repo", gitutil.WorkingTreeSource(), nil)
+			model.viewMode = mode
+			frameWidth := paneStyle.GetHorizontalFrameSize()
+			for _, width := range []int{201, 160, 100, 73, 60, 201} {
+				t.Run(fmt.Sprint(width), func(t *testing.T) {
+					updated, _ := model.Update(tea.WindowSizeMsg{Width: width, Height: 18})
+					model = updated.(diffModel)
+					if got := model.explorerWidth + frameWidth; got > width/2 {
+						t.Fatalf("explorer width after terminal resize = %d, limit = %d", got, width/2)
+					}
+					for _, key := range []tea.KeyMsg{
+						{Type: tea.KeyRight, Alt: true},
+						{Type: tea.KeyRunes, Runes: []rune{'l'}, Alt: true},
+					} {
+						for range 100 {
+							updated, _ = model.Update(key)
+							model = updated.(diffModel)
+						}
+						layout := model.calculateLayout()
+						if got := layout.explorer + frameWidth; got > width/2 {
+							t.Fatalf("explorer width after %s = %d, limit = %d", key, got, width/2)
+						}
+						if width >= 160 && layout.explorer+frameWidth != width/2 {
+							t.Fatalf("explorer stops at %d, want half terminal %d", layout.explorer+frameWidth, width/2)
+						}
+						if model.explorerWidth != layout.explorer {
+							t.Fatalf("stored width = %d, layout = %d", model.explorerWidth, layout.explorer)
+						}
+						if width >= 100 && (layout.before < diffContentMinWidth || layout.after < diffContentMinWidth) {
+							t.Fatalf("diff widths = %d and %d, want at least %d", layout.before, layout.after, diffContentMinWidth)
+						}
+					}
+					if width >= 100 {
+						before := model.explorerWidth
+						updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyLeft, Alt: true})
+						model = updated.(diffModel)
+						if model.explorerWidth != before-diffExplorerResizeStep {
+							t.Fatalf("shrinking after the limit = %d, want %d", model.explorerWidth, before-diffExplorerResizeStep)
+						}
+					}
+				})
+			}
+		})
 	}
-	layout := model.calculateLayout()
-	if layout.before < diffContentMinWidth || layout.after < diffContentMinWidth {
-		t.Fatalf("split widths = %d and %d, want each at least %d", layout.before, layout.after, diffContentMinWidth)
+}
+
+func TestDiffViewerPaneBordersFillAllocatedWidth(t *testing.T) {
+	for name, files := range map[string][]gitutil.DiffFile{
+		"empty": nil,
+		"short": {{Path: "a", Status: "M"}},
+		"long":  {{Path: strings.Repeat("directory/파일/", 12) + "file.txt", Status: "M"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			model := newDiffModel(context.Background(), "/repo", gitutil.WorkingTreeSource(), files)
+			model.setPatch([]byte("@@ -1 +1 @@\n-old\n+new\n"))
+			checkBorders := func() {
+				t.Helper()
+				layout := model.calculateLayout()
+				var widths []int
+				if model.explorerVisible {
+					widths = append(widths, layout.explorer)
+				}
+				if model.viewMode == diffViewSplit {
+					widths = append(widths, layout.before, layout.after)
+				} else {
+					widths = append(widths, layout.unified)
+				}
+				// Inspect the pane row, not View's width: the full-width header
+				// can hide unused space beside content-sized panes.
+				topBorder := strings.Split(model.View(), "\n")[1]
+				borders := strings.SplitAfter(topBorder, "╮")
+				if len(borders) != len(widths)+1 {
+					t.Fatalf("pane borders = %q, want %d panes", topBorder, len(widths))
+				}
+				for index, width := range widths {
+					want := width + paneStyle.GetHorizontalFrameSize()
+					if got := lipgloss.Width(borders[index]); got != want {
+						t.Fatalf("pane %d border width = %d, allocated = %d", index, got, want)
+					}
+				}
+				if got := lipgloss.Width(topBorder); got != model.width {
+					t.Fatalf("pane row width = %d, terminal = %d", got, model.width)
+				}
+			}
+			for _, event := range []tea.Msg{
+				tea.WindowSizeMsg{Width: 201, Height: 18},
+				tea.KeyMsg{Type: tea.KeyRight, Alt: true},
+				tea.WindowSizeMsg{Width: 100, Height: 18},
+				tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}},
+				tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}},
+				tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}},
+				tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'e'}},
+				tea.WindowSizeMsg{Width: 201, Height: 18},
+			} {
+				updated, _ := model.Update(event)
+				model = updated.(diffModel)
+				if key, ok := event.(tea.KeyMsg); ok && key.Alt {
+					for range 100 {
+						updated, _ = model.Update(key)
+						model = updated.(diffModel)
+					}
+				}
+				checkBorders()
+			}
+		})
 	}
 }
 

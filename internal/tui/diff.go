@@ -308,6 +308,8 @@ func (m diffModel) View() string {
 
 	if m.explorerVisible {
 		style := diffPaneStyle(m.focus == diffFocusExplorer)
+		// Short paths must not shrink the pane after its width is allocated.
+		style = style.Width(layout.explorer + style.GetHorizontalPadding())
 		panes = append(panes, style.Render(
 			renderPaneTitle(fmt.Sprintf("FILES  %d", len(m.files)), layout.explorer, selectorSectionStyle)+"\n"+m.renderFileList(layout.explorer),
 		))
@@ -457,7 +459,8 @@ func (m diffModel) calculateLayout() diffLayout {
 	if m.explorerVisible {
 		totalPanes++
 	}
-	contentWidth := max(m.width-(totalPanes*4), totalPanes)
+	paneFrameWidth := paneStyle.GetHorizontalFrameSize()
+	contentWidth := max(m.width-(totalPanes*paneFrameWidth), totalPanes)
 	diffWidth := contentWidth
 	layout := diffLayout{}
 
@@ -471,6 +474,9 @@ func (m diffModel) calculateLayout() diffLayout {
 			minExplorer = max(contentWidth/totalPanes, 1)
 			maxExplorer = minExplorer
 		}
+		// Include padding and borders in the explorer's half-terminal limit.
+		maxExplorer = min(maxExplorer, max(m.width/2-paneFrameWidth, 1))
+		minExplorer = min(minExplorer, maxExplorer)
 		layout.explorer = min(max(m.explorerWidth, minExplorer), maxExplorer)
 		diffWidth = max(contentWidth-layout.explorer, diffPaneCount)
 	}
