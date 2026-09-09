@@ -16,7 +16,10 @@ import (
 	"github.com/chojs23/ec/internal/tui"
 )
 
-var errNoConflicts = errors.New("no conflicted files found")
+var (
+	errNoConflicts    = errors.New("no conflicted files found")
+	workspaceSelector = tui.SelectWorkspace
+)
 
 const maxRecentDiffCommits = 100
 
@@ -101,11 +104,19 @@ func selectWorkspaceFromRepo(ctx context.Context) (repoWorkspace, tui.WorkspaceS
 	}
 	diffSources, err := gitutil.RecentCommitSources(ctx, workspace.repoRoot, workspace.scope, maxRecentDiffCommits)
 	if err != nil {
-		return repoWorkspace{}, tui.WorkspaceSelection{}, err
+		if ctx.Err() != nil {
+			return repoWorkspace{}, tui.WorkspaceSelection{}, ctx.Err()
+		}
+		if len(conflicts) == 0 {
+			return repoWorkspace{}, tui.WorkspaceSelection{}, err
+		}
+		// Resolving index stages must not depend on optional commit history or statistics.
+		fmt.Fprintf(os.Stderr, "Warning: recent commits are unavailable; continuing with conflicts and working tree: %v\n", err)
+		diffSources = nil
 	}
 	diffSources = append([]gitutil.DiffSource{gitutil.WorkingTreeSource()}, diffSources...)
 
-	selection, err := tui.SelectWorkspace(ctx, conflicts, diffSources)
+	selection, err := workspaceSelector(ctx, conflicts, diffSources)
 	if err != nil {
 		return repoWorkspace{}, tui.WorkspaceSelection{}, err
 	}

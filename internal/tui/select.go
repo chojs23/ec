@@ -168,6 +168,18 @@ func (m workspaceSelectModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "up", "k":
 			m.moveSelection(-1)
 			return m, nil
+		case "pgup", "left", "h", "b", "u":
+			m.moveSelection(-m.bodyHeight())
+			return m, nil
+		case "pgdown", "right", "l", "f", "d":
+			m.moveSelection(m.bodyHeight())
+			return m, nil
+		case "home", "g":
+			m.moveSelection(-m.selected)
+			return m, nil
+		case "end", "G":
+			m.moveSelection(len(m.items) - 1 - m.selected)
+			return m, nil
 		case keyNextUnresolvedFile:
 			selectAdjacentUnresolvedFile(&m, 1)
 			return m, nil
@@ -369,7 +381,11 @@ func selectFirstUnresolvedFile(model *workspaceSelectModel) {
 }
 
 func selectAdjacentUnresolvedFile(model *workspaceSelectModel, direction int) {
-	for index := model.selected + direction; index >= 0 && index < model.conflictCount; index += direction {
+	start := model.selected + direction
+	if direction < 0 {
+		start = min(start, model.conflictCount-1)
+	}
+	for index := start; index >= 0 && index < model.conflictCount; index += direction {
 		if !model.items[index].resolved {
 			model.selected = index
 			model.ensureSelectionVisible()

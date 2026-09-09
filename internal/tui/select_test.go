@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -118,32 +119,138 @@ func TestWorkspaceSelectorSelectsConflictAndDiffTargets(t *testing.T) {
 	}
 }
 
-func TestWorkspaceSelectorUnresolvedNavigationStaysInConflictSection(t *testing.T) {
-	model := newWorkspaceSelectModel(
-		[]FileCandidate{
-			{Path: "a.txt", Resolved: false},
-			{Path: "b.txt", Resolved: true},
-			{Path: "c.txt", Resolved: false},
+func TestWorkspaceSelectorUnresolvedNavigationAcrossSections(t *testing.T) {
+	sources := []gitutil.DiffSource{
+		gitutil.WorkingTreeSource(),
+		{Kind: gitutil.DiffSourceCommit, ShortHash: "commit1"},
+		{Kind: gitutil.DiffSourceCommit, ShortHash: "commit2"},
+	}
+	for _, tc := range []struct {
+		name      string
+		conflicts []FileCandidate
+		previous  []int
+		next      []int
+	}{
+		{
+			name: "skip resolved conflicts without wrapping",
+			conflicts: []FileCandidate{
+				{Path: "a.txt", Resolved: true},
+				{Path: "b.txt"},
+				{Path: "c.txt", Resolved: true},
+				{Path: "d.txt"},
+				{Path: "e.txt", Resolved: true},
+			},
+			previous: []int{0, 1, 1, 1, 3, 3, 3, 3},
+			next:     []int{1, 3, 3, 3, 4, 5, 6, 7},
 		},
-		[]gitutil.DiffSource{gitutil.WorkingTreeSource()},
-	)
-
-	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	model = updated.(workspaceSelectModel)
-	if model.selected != 2 {
-		t.Fatalf("selected = %d, want next unresolved at 2", model.selected)
+		{
+			name:      "all conflicts resolved",
+			conflicts: []FileCandidate{{Path: "done.txt", Resolved: true}},
+			previous:  []int{0, 1, 2, 3},
+			next:      []int{0, 1, 2, 3},
+		},
+		{name: "no conflicts", previous: []int{0, 1, 2}, next: []int{0, 1, 2}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for key, expected := range map[rune][]int{'p': tc.previous, 'n': tc.next} {
+				for start, want := range expected {
+					model := newWorkspaceSelectModel(tc.conflicts, sources)
+					model.width, model.height = 40, 6
+					model.selected = start
+					model.ensureSelectionVisible()
+					updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{key}})
+					model = updated.(workspaceSelectModel)
+					if model.selected != want {
+						t.Errorf("%c from %d selected %d, want %d", key, start, model.selected, want)
+					}
+					if !strings.Contains(model.View(), model.renderItem(model.selected)) {
+						t.Errorf("%c from %d leaves the selected row offscreen", key, start)
+					}
+				}
+			}
+		})
 	}
+}
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'n'}})
-	model = updated.(workspaceSelectModel)
-	if model.selected != 2 {
-		t.Fatalf("selected = %d, want navigation to stop before diff section", model.selected)
+func TestWorkspaceSelectorPageNavigation(t *testing.T) {
+	conflicts := []FileCandidate{{Path: "a.txt"}, {Path: "b.txt"}}
+	sources := []gitutil.DiffSource{gitutil.WorkingTreeSource()}
+	for index := range 30 {
+		sources = append(sources, gitutil.DiffSource{Kind: gitutil.DiffSourceCommit, ShortHash: fmt.Sprintf("commit%d", index)})
 	}
+	for _, size := range []tea.WindowSizeMsg{{Width: 80, Height: 12}, {Width: 40, Height: 6}} {
+		for _, tc := range []struct {
+			keys      []tea.KeyMsg
+			direction int
+		}{
+			{
+				keys: []tea.KeyMsg{
+					{Type: tea.KeyPgUp}, {Type: tea.KeyLeft},
+					{Type: tea.KeyRunes, Runes: []rune{'h'}},
+					{Type: tea.KeyRunes, Runes: []rune{'b'}},
+					{Type: tea.KeyRunes, Runes: []rune{'u'}},
+				},
+				direction: -1,
+			},
+			{
+				keys: []tea.KeyMsg{
+					{Type: tea.KeyPgDown}, {Type: tea.KeyRight},
+					{Type: tea.KeyRunes, Runes: []rune{'l'}},
+					{Type: tea.KeyRunes, Runes: []rune{'f'}},
+					{Type: tea.KeyRunes, Runes: []rune{'d'}},
+				},
+				direction: 1,
+			},
+		} {
+			for _, key := range tc.keys {
+				for _, start := range []int{0, 1, 15, len(conflicts) + len(sources) - 1} {
+					model := newWorkspaceSelectModel(conflicts, sources)
+					updated, _ := model.Update(size)
+					model = updated.(workspaceSelectModel)
+					model.selected = start
+					model.ensureSelectionVisible()
+					want := min(max(start+tc.direction*model.bodyHeight(), 0), len(model.items)-1)
+					updated, _ = model.Update(key)
+					model = updated.(workspaceSelectModel)
+					if model.selected != want {
+						t.Errorf("%s from %d at %dx%d selected %d, want %d", key.String(), start, size.Width, size.Height, model.selected, want)
+					}
+					if !strings.Contains(model.View(), model.renderItem(model.selected)) {
+						t.Errorf("%s leaves the selected row offscreen", key.String())
+					}
+				}
+			}
+		}
+	}
+}
 
-	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
-	model = updated.(workspaceSelectModel)
-	if model.selected != 0 {
-		t.Fatalf("selected = %d, want previous unresolved at 0", model.selected)
+func TestWorkspaceSelectorFirstAndLastNavigation(t *testing.T) {
+	for _, key := range []tea.KeyMsg{
+		{Type: tea.KeyHome}, {Type: tea.KeyEnd},
+		{Type: tea.KeyRunes, Runes: []rune{'g'}},
+		{Type: tea.KeyRunes, Runes: []rune{'G'}},
+	} {
+		for _, count := range []int{0, 1, 40} {
+			conflicts := make([]FileCandidate, count)
+			for index := range conflicts {
+				conflicts[index].Path = fmt.Sprintf("file%d.txt", index)
+			}
+			model := newWorkspaceSelectModel(conflicts, nil)
+			model.width, model.height = 40, 6
+			model.selected = count / 2
+			want := 0
+			if key.Type == tea.KeyEnd || key.String() == "G" {
+				want = max(count-1, 0)
+			}
+			updated, _ := model.Update(key)
+			model = updated.(workspaceSelectModel)
+			if model.selected != want {
+				t.Errorf("%s with %d items selected %d, want %d", key.String(), count, model.selected, want)
+			}
+			if count > 0 && !strings.Contains(model.View(), model.renderItem(model.selected)) {
+				t.Errorf("%s leaves the selected row offscreen", key.String())
+			}
+		}
 	}
 }
 

@@ -6,10 +6,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/chojs23/ec/internal/cli"
 	"github.com/chojs23/ec/internal/gitutil"
+	"github.com/chojs23/ec/internal/tui"
 )
 
 func withStdin(t *testing.T, input string, fn func()) {
@@ -406,6 +408,129 @@ func TestPrepareInteractiveFromRepoPopulatesOptions(t *testing.T) {
 	}
 	if string(remoteBytes) != "theirs\n" {
 		t.Fatalf("remote temp content = %q, want theirs", string(remoteBytes))
+	}
+}
+
+func TestSelectWorkspaceFromRepoKeepsConflictsWhenHistoryFails(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping git integration test in short mode")
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found in PATH")
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+	for _, tc := range []struct {
+		name      string
+		objectRef string
+		command   string
+	}{
+		{name: "history traversal", objectRef: "HEAD~2", command: "git log"},
+		{name: "commit statistics", objectRef: "HEAD~2:history.txt", command: "git diff-tree"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// Match Git's physical repo path on systems where the temp directory is a symlink.
+			repoDir, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, repoDir, "init")
+			runGit(t, repoDir, "config", "user.email", "test@example.com")
+			runGit(t, repoDir, "config", "user.name", "Test User")
+			runGit(t, repoDir, "config", "gc.auto", "0")
+			conflictPath := filepath.Join(repoDir, "conflict.txt")
+			writeConflict := func(content string) {
+				t.Helper()
+				if err := os.WriteFile(conflictPath, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			writeConflict("base\n")
+			if err := os.WriteFile(filepath.Join(repoDir, "history.txt"), []byte("historical content\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			runGit(t, repoDir, "add", ".")
+			runGit(t, repoDir, "commit", "-m", "base")
+			runGit(t, repoDir, "rm", "history.txt")
+			runGit(t, repoDir, "commit", "-m", "remove historical file")
+			runGit(t, repoDir, "checkout", "-b", "feature")
+			writeConflict("theirs\n")
+			runGit(t, repoDir, "commit", "-am", "theirs")
+			runGit(t, repoDir, "checkout", "-")
+			writeConflict("ours\n")
+			runGit(t, repoDir, "commit", "-am", "ours")
+			merge := exec.Command("git", "merge", "feature")
+			merge.Dir = repoDir
+			if output, err := merge.CombinedOutput(); err == nil || !strings.Contains(string(output), "CONFLICT") {
+				t.Fatalf("expected merge conflict: %v\n%s", err, output)
+			}
+
+			// Only history is damaged. All three conflict-stage blobs stay readable.
+			revParse := exec.Command("git", "rev-parse", tc.objectRef)
+			revParse.Dir = repoDir
+			output, err := revParse.Output()
+			if err != nil {
+				t.Fatal(err)
+			}
+			hash := strings.TrimSpace(string(output))
+			if err := os.Remove(filepath.Join(repoDir, ".git", "objects", hash[:2], hash[2:])); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := gitutil.RecentCommitSources(context.Background(), repoDir, ".", 100); err == nil || !strings.Contains(err.Error(), tc.command) {
+				t.Fatalf("expected %s failure, got %v", tc.command, err)
+			}
+			t.Chdir(repoDir)
+
+			stderr, err := os.CreateTemp(t.TempDir(), "stderr")
+			if err != nil {
+				t.Fatal(err)
+			}
+			oldStderr, oldSelector := os.Stderr, workspaceSelector
+			os.Stderr = stderr
+			t.Cleanup(func() {
+				os.Stderr, workspaceSelector = oldStderr, oldSelector
+				stderr.Close()
+			})
+			called := false
+			workspaceSelector = func(_ context.Context, conflicts []tui.FileCandidate, sources []gitutil.DiffSource) (tui.WorkspaceSelection, error) {
+				called = true
+				if len(conflicts) != 1 || conflicts[0].Path != "conflict.txt" || conflicts[0].Resolved {
+					t.Fatalf("conflict choices = %#v", conflicts)
+				}
+				if len(sources) != 1 || sources[0].Kind != gitutil.DiffSourceWorkingTree {
+					t.Fatalf("diff choices = %#v, want working tree only", sources)
+				}
+				return tui.WorkspaceSelection{Kind: tui.WorkspaceSelectionConflict, ConflictPath: conflicts[0].Path}, nil
+			}
+			workspace, selection, err := selectWorkspaceFromRepo(context.Background())
+			if err != nil || !called {
+				t.Fatalf("conflict selector called = %v, error = %v", called, err)
+			}
+			var opts cli.Options
+			cleanup, err := prepareConflictFromRepo(context.Background(), &opts, workspace, selection.ConflictPath)
+			if err != nil {
+				t.Fatalf("prepare conflict despite history failure: %v", err)
+			}
+			t.Cleanup(cleanup)
+			for path, want := range map[string]string{opts.BasePath: "base\n", opts.LocalPath: "ours\n", opts.RemotePath: "theirs\n"} {
+				got, err := os.ReadFile(path)
+				if err != nil || string(got) != want {
+					t.Fatalf("stage content = %q, want %q, error = %v", got, want, err)
+				}
+			}
+			warning, err := os.ReadFile(stderr.Name())
+			if err != nil || !strings.Contains(string(warning), "Warning:") || !strings.Contains(string(warning), tc.command) {
+				t.Fatalf("warning = %q, error = %v", warning, err)
+			}
+
+			// Without any supported conflicts, history failures still surface as errors.
+			runGit(t, repoDir, "update-index", "--force-remove", "conflict.txt")
+			called = false
+			if _, _, err := selectWorkspaceFromRepo(context.Background()); err == nil || !strings.Contains(err.Error(), tc.command) || called {
+				t.Fatalf("without conflicts, selector called = %v, error = %v", called, err)
+			}
+		})
 	}
 }
 
