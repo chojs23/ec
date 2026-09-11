@@ -206,6 +206,12 @@ func (m *diffModel) handleKey(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case "alt+l", "alt+right":
 		m.adjustExplorerWidth(diffExplorerResizeStep)
 		return nil, true
+	case "enter":
+		if m.focus != diffFocusExplorer || !m.explorerVisible {
+			return nil, false
+		}
+		m.focus = diffFocusContent
+		return nil, true
 	case keySelectOurs:
 		if m.explorerVisible {
 			m.focus = diffFocusExplorer

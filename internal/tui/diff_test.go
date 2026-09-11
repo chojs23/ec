@@ -186,6 +186,24 @@ func TestDiffViewerFocusControlsFileSelectionAndDiffScrolling(t *testing.T) {
 	}
 }
 
+func TestDiffViewerEnterFocusesSelectedFileDiff(t *testing.T) {
+	model := newDiffModel(
+		context.Background(),
+		"/repo",
+		gitutil.WorkingTreeSource(),
+		[]gitutil.DiffFile{{Path: "one.txt", Status: "M"}, {Path: "two.txt", Status: "M"}},
+	)
+
+	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyDown})
+	model = updated.(diffModel)
+	updated, command := model.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(diffModel)
+
+	if model.focus != diffFocusContent || model.selected != 1 || command != nil {
+		t.Fatalf("enter state = focus %d selected %d command nil %v, want content focus on selected file", model.focus, model.selected, command == nil)
+	}
+}
+
 func TestDiffViewerTogglesExplorerAndSplitView(t *testing.T) {
 	model := newDiffModel(
 		context.Background(),
