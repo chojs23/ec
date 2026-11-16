@@ -199,6 +199,7 @@ type model struct {
 	width            int
 	height           int
 	quitting         bool
+	confirmingQuit   bool
 	toastMessage     string
 	toastSeq         int
 	err              error
@@ -568,6 +569,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		key := msg.String()
+		if m.confirmingQuit {
+			switch key {
+			case "y":
+				m.confirmingQuit = false
+				m.quitting = true
+				return m, tea.Quit
+			case "enter", "esc", "n":
+				m.confirmingQuit = false
+			}
+			return m, nil
+		}
 		if key == keyGoTop {
 			if m.keySeq == keyGoTop {
 				m.keySeq = ""
@@ -655,6 +667,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	if m.confirmingQuit {
+		style := headerStyle
+		if m.width > 0 {
+			style = style.Width(m.width)
+		}
+		return style.Render("Saved file still has unresolved conflicts.\n" +
+			"Aborting may discard changes saved in this session.\n\n" +
+			"enter/esc/n: continue editing | y: abort and quit")
+	}
+
 	if !m.ready {
 		return "\n  Initializing..."
 	}
@@ -665,6 +687,9 @@ func (m model) View() string {
 				return "\n  Returning to selector...\n"
 			}
 			return fmt.Sprintf("\n  Error: %v\n", m.err)
+		}
+		if m.opts.ConfirmIncompleteQuit {
+			return "\n  Exiting merge tool...\n"
 		}
 		return "\n  Resolved! File written.\n"
 	}
@@ -760,7 +785,7 @@ func (m model) resolverFooterText() string {
 	if m.redoDepth() > 0 {
 		redoInfo = fmt.Sprintf(" | Redo available: %d", m.redoDepth())
 	}
-	return fmt.Sprintf("%s%s%s", resolverFooterKeyMapText(), undoInfo, redoInfo)
+	return fmt.Sprintf("%s%s%s", m.resolverFooterKeyMapText(), undoInfo, redoInfo)
 }
 
 func (m model) resolverViewportHeight() int {
@@ -823,9 +848,12 @@ func unresolvedConflictCount(doc markers.Document, manualResolved map[int][]byte
 	return remaining
 }
 
-func resolverFooterKeyMapText() string {
+func (m model) resolverFooterKeyMapText() string {
 	parts := make([]string, 0, len(resolverKeyHelp))
 	for _, entry := range resolverKeyHelp {
+		if entry.key == keyQuit && m.opts.ConfirmIncompleteQuit {
+			entry = keyHelpEntry{key: "q/ctrl+c", description: "quit"}
+		}
 		parts = append(parts, fmt.Sprintf("%s: %s", entry.key, entry.description))
 	}
 	return strings.Join(parts, " | ")
@@ -866,12 +894,32 @@ func (m *model) applyAll(resolution markers.Resolution) error {
 }
 
 func (m *model) handleQuit() (tea.Cmd, error) {
+	if m.opts.ConfirmIncompleteQuit {
+		return m.handleMergeToolQuit()
+	}
 	m.err = ErrBackToSelector
 	m.quitting = true
 	return tea.Quit, nil
 }
 
 func (m *model) handleCtrlC() (tea.Cmd, error) {
+	if m.opts.ConfirmIncompleteQuit {
+		return m.handleMergeToolQuit()
+	}
+	m.quitting = true
+	return tea.Quit, nil
+}
+
+func (m *model) handleMergeToolQuit() (tea.Cmd, error) {
+	// The caller may roll back partial saves on failure, so confirm using the saved output.
+	resolved, err := engine.CheckResolvedFile(m.opts.MergedPath)
+	if err != nil {
+		return nil, fmt.Errorf("check saved merge: %w", err)
+	}
+	if !resolved {
+		m.confirmingQuit = true
+		return nil, nil
+	}
 	m.quitting = true
 	return tea.Quit, nil
 }
