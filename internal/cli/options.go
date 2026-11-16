@@ -17,4 +17,6 @@ type Options struct {
 	Backup bool
 
 	AllowMissingBase bool
+	// External merge tools may discard saved output when an unfinished session exits.
+	ConfirmIncompleteQuit bool
 }

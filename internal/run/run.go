@@ -11,17 +11,11 @@ import (
 	"github.com/chojs23/ec/internal/tui"
 )
 
+var runResolver = tui.Run
+
 func Run(ctx context.Context, opts cli.Options) int {
 	if opts.Check {
-		resolved, err := engine.CheckResolvedFile(opts.MergedPath)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 2
-		}
-		if resolved {
-			return 0
-		}
-		return 1
+		return resolvedExitCode(opts.MergedPath)
 	}
 
 	if opts.ApplyAll != "" {
@@ -62,7 +56,7 @@ func Run(ctx context.Context, opts cli.Options) int {
 				return 2
 			}
 
-			err = tui.Run(ctx, opts)
+			err = runResolver(ctx, opts)
 			cleanup()
 			if err != nil {
 				if errors.Is(err, tui.ErrBackToSelector) {
@@ -75,12 +69,22 @@ func Run(ctx context.Context, opts cli.Options) int {
 		}
 	}
 
-	if err := tui.Run(ctx, opts); err != nil {
-		if errors.Is(err, tui.ErrBackToSelector) {
-			return 0
-		}
+	opts.ConfirmIncompleteQuit = true
+	if err := runResolver(ctx, opts); err != nil && !errors.Is(err, tui.ErrBackToSelector) {
 		fmt.Fprintln(os.Stderr, err)
 		return 2
 	}
-	return 0
+	return resolvedExitCode(opts.MergedPath)
+}
+
+func resolvedExitCode(mergedPath string) int {
+	resolved, err := engine.CheckResolvedFile(mergedPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 2
+	}
+	if resolved {
+		return 0
+	}
+	return 1
 }

@@ -154,9 +154,8 @@ Diff viewer keys:
 
 ### Notes
 
-ec does not run git add after you write
-
-Git will still decide whether the merge is resolved based on the file contents
+ec writes files without staging them. When using Git mergetool, Git stages the
+file after ec reports a successful resolution.
 
 ## Git mergetool configuration
 
@@ -185,6 +184,9 @@ Interactive
 ec <BASE> <LOCAL> <REMOTE> <MERGED>
 ec --base <path> --local <path> --remote <path> --merged <path>
 ```
+
+With explicit file paths, ec exits with `0` when the saved file is resolved,
+`1` when conflicts remain, or `2` on errors.
 
 No args mode
 
@@ -315,6 +317,9 @@ Keybindings are vim-like by default.
 - w / ctrl+s: write file without quitting
 - q: back to selector or quit
 
+With explicit file paths, `q` and `ctrl+c` ask before quitting if the saved file
+still has conflicts. Aborting Git mergetool restores the original file.
+
 ## Theme configuration
 
 The TUI can load colors from a theme config file.
@@ -437,7 +442,11 @@ Supported keys:
 
 ## Backup behavior
 
-Backups are off by default. Use --backup to write a sibling file named <merged>.ec.bak before writing the result.
+ec backups are off by default. Use `--backup` to write a sibling file named
+`<merged>.ec.bak` before writing the result.
+
+Git mergetool creates its own `.orig` backups by default. Set
+`mergetool.keepBackup=false` to disable them.
 
 ## Base view behavior
 

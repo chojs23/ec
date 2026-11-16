@@ -2,6 +2,7 @@ package run
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,7 +10,61 @@ import (
 
 	"github.com/chojs23/ec/internal/cli"
 	"github.com/chojs23/ec/internal/gitmerge"
+	"github.com/chojs23/ec/internal/tui"
 )
+
+func TestRunInteractiveSavedOutputExitCodes(t *testing.T) {
+	unresolved := "<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> branch\n"
+	for _, tc := range []struct {
+		name   string
+		saved  string
+		tuiErr error
+		want   int
+	}{
+		{name: "resolved", saved: "resolved\n", want: 0},
+		{name: "resolved on quit", saved: "resolved\n", tuiErr: tui.ErrBackToSelector, want: 0},
+		{name: "unresolved", saved: unresolved, want: 1},
+		{name: "unresolved on quit", saved: unresolved, tuiErr: tui.ErrBackToSelector, want: 1},
+		{name: "TUI error", saved: "resolved\n", tuiErr: errors.New("TUI failed"), want: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mergedPath := filepath.Join(t.TempDir(), "merged.txt")
+			if err := os.WriteFile(mergedPath, []byte("before TUI\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			previous := runResolver
+			t.Cleanup(func() { runResolver = previous })
+			called := false
+			runResolver = func(_ context.Context, opts cli.Options) error {
+				called = true
+				if !opts.ConfirmIncompleteQuit {
+					t.Fatal("explicit-path session must confirm incomplete quits")
+				}
+				if opts.MergedPath != mergedPath {
+					t.Fatalf("merged path = %q, want %q", opts.MergedPath, mergedPath)
+				}
+				if err := os.WriteFile(mergedPath, []byte(tc.saved), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return tc.tuiErr
+			}
+
+			code := Run(context.Background(), cli.Options{
+				BasePath:   "base.txt",
+				LocalPath:  "local.txt",
+				RemotePath: "remote.txt",
+				MergedPath: mergedPath,
+			})
+			if !called {
+				t.Fatal("explicit-path session did not run the resolver")
+			}
+			if code != tc.want {
+				t.Fatalf("interactive exit code = %d, want %d", code, tc.want)
+			}
+		})
+	}
+}
 
 func TestRunCheckResolvedExitCodes(t *testing.T) {
 	tmpDir := t.TempDir()
