@@ -92,6 +92,9 @@ func (s *State) ApplyResolution(conflictIndex int, resolution markers.Resolution
 	if conflictIndex < 0 || conflictIndex >= len(s.canonical.Conflicts) {
 		return fmt.Errorf("conflict index %d out of bounds [0, %d)", conflictIndex, len(s.canonical.Conflicts))
 	}
+	if resolution == markers.ResolutionBase {
+		return nil
+	}
 	if !isSupportedResolution(resolution) {
 		return fmt.Errorf("invalid resolution: %q", resolution)
 	}

@@ -32,6 +32,7 @@ const (
 	keyPrevConflict       = "p"
 	keySelectOurs         = "h"
 	keySelectTheirs       = "l"
+	keySelectBase         = "r" // r like "reset"
 	keyScrollLeft         = "H"
 	keyScrollRight        = "L"
 	keyScrollDown         = "j"
@@ -73,6 +74,7 @@ var resolverKeyHelp = []keyHelpEntry{
 	{key: "O/T", description: "ours all/theirs all"},
 	{key: "b", description: "both"},
 	{key: "x", description: "none"},
+	{key: "r", description: "base"},
 	{key: "d", description: "discard"},
 	{key: "u", description: "undo"},
 	{key: "ctrl+r", description: "redo"},
@@ -100,6 +102,7 @@ var resolverKeyActions = map[string]keyAction{
 	keyArrowUp:        (*model).handleScrollUp,
 	keyApplyOurs:      (*model).handleApplyOurs,
 	keyApplyTheirs:    (*model).handleApplyTheirs,
+	keySelectBase:     (*model).handleSelectBase,
 	keyApplyOursAll:   (*model).handleApplyOursAll,
 	keyApplyTheirsAll: (*model).handleApplyTheirsAll,
 	keyAccept:         (*model).handleAccept,
@@ -220,6 +223,7 @@ type resolverSnapshot struct {
 const (
 	selectedOurs selectionSide = iota
 	selectedTheirs
+	selectedBase
 )
 
 // Run starts the TUI for interactive conflict resolution.
@@ -734,7 +738,11 @@ func (m model) View() string {
 	)
 
 	resultTitle := renderResultPaneTitle(statusText, m.viewportResult.Width, resultTitleStyle, statusStyle)
-	resultPane := paneStyle.Render(
+	resultStyle := paneStyle
+	if m.selectedSide == selectedBase {
+		resultStyle = selectedSidePaneStyle
+	}
+	resultPane := resultStyle.Render(
 		resultTitle + "\n" +
 			renderConflictViewport(m.viewportResult, m.resultLineStyles),
 	)
@@ -863,6 +871,8 @@ func (m *model) applySelectedSide() error {
 	resolution := markers.ResolutionOurs
 	if m.selectedSide == selectedTheirs {
 		resolution = markers.ResolutionTheirs
+	} else if m.selectedSide == selectedBase {
+		resolution = markers.ResolutionBase
 	}
 	return m.applyResolverMutation(func() error {
 		if err := m.state.ApplyResolution(m.currentConflict, resolution); err != nil {
@@ -950,6 +960,12 @@ func (m *model) handleSelectOurs() (tea.Cmd, error) {
 
 func (m *model) handleSelectTheirs() (tea.Cmd, error) {
 	m.selectedSide = selectedTheirs
+	m.updateViewports()
+	return nil, nil
+}
+
+func (m *model) handleSelectBase() (tea.Cmd, error) {
+	m.selectedSide = selectedBase
 	m.updateViewports()
 	return nil, nil
 }
@@ -1112,7 +1128,7 @@ func (m *model) updateViewports() {
 	hunkState := m.currentHunkState()
 	if hunkState.selected == "OURS" {
 		setBlockPresentation(oursLines, blockSelected)
-	} else {
+	} else if hunkState.selected == "THEIRS" {
 		setBlockPresentation(theirsLines, blockSelected)
 	}
 	oursContent, oursStyles := renderLines(oursLines, m.opts.MergedPath, &m.oursSyntax)

@@ -486,6 +486,8 @@ func buildResultLines(doc markers.Document, highlightConflict int, selectedSide 
 					content = s.Ours
 				case markers.ResolutionTheirs:
 					content = s.Theirs
+				case markers.ResolutionBase:
+					content = s.Base
 				case markers.ResolutionBoth:
 					content = []byte(string(s.Ours) + string(s.Theirs))
 				}
@@ -583,6 +585,8 @@ func buildResultPreviewLines(doc markers.Document, selectedSide selectionSide, m
 					forced[len(lines)] = categoryInsertMarker
 					appendLines([]string{placeholder})
 				}
+			case markers.ResolutionBase:
+				appendLines(splitLogicalLines(s.Base))
 			}
 
 			if len(lines) == start && conflictIndex == highlightConflict {
@@ -782,5 +786,9 @@ func resolutionFromSelection(selectedSide selectionSide) markers.Resolution {
 	if selectedSide == selectedTheirs {
 		return markers.ResolutionTheirs
 	}
-	return markers.ResolutionOurs
+	if selectedSide == selectedOurs {
+		return markers.ResolutionOurs
+	}
+
+	return markers.ResolutionBase
 }
