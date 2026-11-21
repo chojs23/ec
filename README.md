@@ -304,6 +304,7 @@ Keybindings are vim-like by default.
 ### Selection and apply
 
 - h / l: select ours or theirs
+- r: view original base code (before ours and theirs modified it)
 - a / space: accept selection
 - o / t / b / x: apply ours, theirs, both, or none
 - d: discard selection

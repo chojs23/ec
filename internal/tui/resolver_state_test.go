@@ -23,8 +23,12 @@ func TestResolverStateSeparatesSelectionFromAppliedChoice(t *testing.T) {
 				key, selected, applied string
 			}{
 				{selected: "OURS", applied: "NOT YET"},
+				{key: "r", selected: "BASE", applied: "NOT YET"},
+				{key: "a", selected: "BASE", applied: "NOT YET"},
+				{key: " ", selected: "BASE", applied: "NOT YET"},
 				{key: "l", selected: "THEIRS", applied: "NOT YET"},
 				{key: "a", selected: "THEIRS", applied: "THEIRS"},
+				{key: "r", selected: "BASE", applied: "THEIRS"},
 				{key: "h", selected: "OURS", applied: "THEIRS"},
 				{key: "u", selected: "OURS", applied: "NOT YET"},
 				{key: "ctrl+r", selected: "OURS", applied: "THEIRS"},

@@ -19,6 +19,8 @@ func (m model) currentHunkState() resolverHunkState {
 	state := resolverHunkState{selected: "OURS"}
 	if m.selectedSide == selectedTheirs {
 		state.selected = "THEIRS"
+	} else if m.selectedSide == selectedBase {
+		state.selected = "BASE"
 	}
 	if m.currentConflict < 0 || m.currentConflict >= len(m.doc.Conflicts) {
 		return state

@@ -6,6 +6,7 @@ const (
 	ResolutionUnset  Resolution = ""
 	ResolutionOurs   Resolution = "ours"
 	ResolutionTheirs Resolution = "theirs"
+	ResolutionBase   Resolution = "base"
 	ResolutionBoth   Resolution = "both"
 	ResolutionNone   Resolution = "none"
 )
