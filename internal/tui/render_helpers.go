@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/viewport"
@@ -729,6 +730,15 @@ func diffEntries(baseLines []string, sideLines []string) []lineEntry {
 func diffOps(baseLines []string, sideLines []string) []diffOp {
 	if len(baseLines) == 0 && len(sideLines) == 0 {
 		return nil
+	}
+
+	// Base previews compare the base to itself, so avoid the quadratic LCS table.
+	if slices.Equal(baseLines, sideLines) {
+		ops := make([]diffOp, len(baseLines))
+		for i, line := range baseLines {
+			ops[i] = diffOp{kind: opEqual, text: line, baseIndex: i}
+		}
+		return ops
 	}
 
 	lcs := make([][]int, len(baseLines)+1)

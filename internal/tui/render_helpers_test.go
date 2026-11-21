@@ -1,7 +1,9 @@
 package tui
 
 import (
+	"fmt"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/lipgloss"
@@ -96,11 +98,13 @@ func TestResultBlockContentMatchesResolution(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		ours       string
+		selection  selectionSide
 		resolution markers.Resolution
 		manual     map[int][]byte
 		want       string
 	}{
 		{name: "preview", ours: "ours\n", want: "ours\n"},
+		{name: "base preview", selection: selectedBase, want: "base\n"},
 		{name: "empty preview"},
 		{name: "applied empty side", resolution: markers.ResolutionOurs},
 		{name: "applied theirs", resolution: markers.ResolutionTheirs, want: "theirs\n"},
@@ -112,8 +116,8 @@ func TestResultBlockContentMatchesResolution(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			seg := markers.ConflictSegment{Base: []byte("base\n"), Ours: []byte(tc.ours), Theirs: []byte("theirs\n"), Resolution: tc.resolution}
 			doc := markers.Document{Segments: []markers.Segment{seg}, Conflicts: []markers.ConflictRef{{SegmentIndex: 0}}}
-			fallback, _ := buildResultLines(doc, 0, selectedOurs, tc.manual, nil)
-			preview, forced, ranges := buildResultPreviewLines(doc, selectedOurs, tc.manual, 0, nil)
+			fallback, _ := buildResultLines(doc, 0, tc.selection, tc.manual, nil)
+			preview, forced, ranges := buildResultPreviewLines(doc, tc.selection, tc.manual, 0, nil)
 			full, _ := buildResultLinesFromEntries(diffEntries(splitLogicalLines(seg.Base), preview), ranges, 0, forced)
 			for _, lines := range [][]lineInfo{fallback, full} {
 				if lines[0].text != "Conflict 1" || lines[len(lines)-1].text != "End conflict 1" {
@@ -201,6 +205,39 @@ func TestDiffEntriesCategories(t *testing.T) {
 	}
 	if entries[1].category != categoryAdded {
 		t.Fatalf("added category = %v, want added", entries[1].category)
+	}
+}
+
+func TestDiffEntriesKeepsUnchangedLinePositions(t *testing.T) {
+	lines := []string{"first", "repeated", "repeated", "last"}
+	want := make([]lineEntry, len(lines))
+	for i, line := range lines {
+		want[i] = lineEntry{text: line, category: categoryDefault, baseIndex: i}
+	}
+	if got := diffEntries(lines, slices.Clone(lines)); !slices.Equal(got, want) {
+		t.Fatalf("unchanged entries = %+v, want %+v", got, want)
+	}
+}
+
+func BenchmarkBasePreview(b *testing.B) {
+	for _, lineCount := range []int{2000, 4000} {
+		base := strings.Repeat("base line\n", lineCount)
+		seg := markers.ConflictSegment{Base: []byte(base), Ours: []byte("ours\n"), Theirs: []byte("theirs\n")}
+		doc := markers.Document{Segments: []markers.Segment{seg}, Conflicts: []markers.ConflictRef{{SegmentIndex: 0}}}
+		baseLines := splitLogicalLines(seg.Base)
+		b.Run(fmt.Sprintf("fallback/%d", lineCount), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				_, _ = buildResultLines(doc, 0, selectedBase, nil, nil)
+			}
+		})
+		b.Run(fmt.Sprintf("full/%d", lineCount), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				preview, forced, ranges := buildResultPreviewLines(doc, selectedBase, nil, 0, nil)
+				_, _ = buildResultLinesFromEntries(diffEntries(baseLines, preview), ranges, 0, forced)
+			}
+		})
 	}
 }
 
